@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Runtime
+gateway.log
+*.log
+scripts/.run/
+.DS_Store
+Thumbs.db
+
+# Login state / cookies / local config (never commit)
+node/profiles/
+node/.local/
+*.local.php
+config.local.php
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Temp
+tmp/
+.temp/
+*.tmp

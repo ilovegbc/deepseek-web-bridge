@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh">
+<meta charset="utf-8">
+<title>deepseek-web-bridge 调试页</title>
+<style>body{font-family:system-ui;max-width:900px;margin:40px auto;padding:0 20px}pre{background:#f5f5f5;padding:12px;border-radius:8px;overflow:auto}button{padding:8px 16px;margin:4px;border-radius:6px;border:1px solid #ccc;cursor:pointer}input{width:100%;padding:8px;border:1px solid #ddd;border-radius:6px}</style>
+<h1>deepseek-web-bridge — 调试页</h1>
+<p>本地 OpenAI 兼容网关 + Playwright sidecar。运行 <code>.\scripts\manage.ps1 -Action start</code> 后使用本页自检。仅供学习交流。</p>
+<p>先完成网页登录：<a href="/login" target="_blank">/login 打开登录窗口</a>（未登录时 chat 返回 503 gateway busy）</p>
+
+<h2>1) 健康检查</h2>
+<button onclick="fetch('/health').then(r=>r.text()).then(t=>health.textContent=t)">GET /health</button>
+<pre id="health"></pre>
+
+<h2>2) 模型列表</h2>
+<button onclick="fetch('/v1/models',{headers:{'Authorization':'Bearer sk-test-local-proxy-key'}}).then(r=>r.json()).then(j=>models.textContent=JSON.stringify(j,null,2))">GET /v1/models</button>
+<pre id="models"></pre>
+
+<h2>3) 非流式对话 (POST /v1/chat/completions)</h2>
+<input id="prompt" value="你好，请简短介绍一下反代原理">
+<button onclick="chat(false)">发送 (stream=false)</button>
+<button onclick="chat(true)">发送 (stream=true SSE)</button>
+<pre id="chat"></pre>
+
+<h2>4) curl 示例</h2>
+<pre>
+# 健康检查
+curl http://127.0.0.1:8080/health
+
+# 模型列表
+curl http://127.0.0.1:8080/v1/models -H "Authorization: Bearer sk-test-local-proxy-key"
+
+# 非流式
+curl http://127.0.0.1:8080/v1/chat/completions -H "Content-Type: application/json" -H "Authorization: Bearer sk-test-local-proxy-key" -d "{\"model\":\"deepseek-chat\",\"messages\":[{\"role\":\"user\",\"content\":\"你好\"}]}"
+
+# 流式
+curl -N http://127.0.0.1:8080/v1/chat/completions -H "Content-Type: application/json" -H "Authorization: Bearer sk-test-local-proxy-key" -d "{\"model\":\"deepseek-chat\",\"messages\":[{\"role\":\"user\",\"content\":\"你好\"}],\"stream\":true}"
+
+# 登录状态
+curl http://127.0.0.1:8080/login/status
+</pre>
+
+<script>
+async function chat(stream){
+  const prompt=document.getElementById('prompt').value;
+  const box=document.getElementById('chat');
+  box.textContent='请求中...';
+  try{
+    const res=await fetch('/v1/chat/completions',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer sk-test-local-proxy-key'},
+      body:JSON.stringify({model:'deepseek-chat',messages:[{role:'user',content:prompt}],stream})
+    });
+    if(!stream){
+      const j=await res.json();
+      box.textContent=JSON.stringify(j,null,2);
+    }else{
+      box.textContent='';
+      const reader=res.body.getReader();
+      const dec=new TextDecoder();
+      while(true){
+        const {done,value}=await reader.read();
+        if(done) break;
+        box.textContent+=dec.decode(value);
+        box.scrollTop=box.scrollHeight;
+      }
+    }
+  }catch(e){box.textContent='error: '+e}
+}
+</script>
+</html>
