@@ -58,7 +58,7 @@ header("Access-Control-Allow-Methods: *");
 if ($path==='/health' || $path==='/_tunnel_probe' || $path==='/__tunnel_probe'
     || $path==='/' || $path==='/index.php'
     || $path==='/login' || $path==='/login.php' || $path==='/login/status'
-    || $path==='/login/open') {
+    || $path==='/login/open' || $path==='/accounts') {
     // public routes
 } else {
     if (API_KEY !== '') {
@@ -84,15 +84,32 @@ if ($method==='GET' && ($path==='/login' || $path==='/login.php')) {
     $all = $status['ok'] && is_array($status['data']) ? $status['data'] : [];
     $gwBase = 'http://127.0.0.1:' . LISTEN_PORT . '/v1';
     $pid = 'deepseek';
-    $st = $all[$pid] ?? null;
     $home = $UPSTREAM_MAP[$pid]['url'] ?? '';
     $model = $UPSTREAM_MAP[$pid]['model'] ?? '';
-    $loggedIn = !empty($st['loggedIn']);
-    $running = !empty($st['running']);
-    $badge = $loggedIn ? '<span class="ok">已登录</span>'
-          : ($running ? '<span class="warn">未登录</span>' : '<span class="muted">未启动</span>');
-    $rows = '<tr><td><strong>'.$pid.'</strong></td><td><a href="'.htmlspecialchars($home).'" target="_blank">'.htmlspecialchars($home).'</a></td><td><code>'.$model.'</code></td><td>'.$badge.'</td>'
-          .'<td><button class="btn" onclick="openLogin(\''.$pid.'\')">打开登录窗口</button></td></tr>';
+    $sum = pool_summary();
+    $rows = '';
+    if (empty($all)) {
+        $badge = '<span class="muted">未启动</span>';
+        $rows .= '<tr><td><strong>acc1</strong></td><td><a href="'.htmlspecialchars($home).'" target="_blank">'.htmlspecialchars($home).'</a></td><td><code>'.$model.'</code></td><td>'.$badge.'</td>'
+              .'<td><button class="btn" onclick="openLogin(\'deepseek\',\'\')">打开登录窗口</button></td></tr>';
+    } else {
+        foreach ($all as $key => $st) {
+            $aid = (string)($st['accountId'] ?? $key);
+            $label = htmlspecialchars((string)($st['label'] ?? $aid));
+            $loggedIn = !empty($st['loggedIn']);
+            $busy = !empty($st['busy']);
+            $running = !empty($st['running']);
+            $badge = $loggedIn ? '<span class="ok">已登录</span>'
+                  : ($running ? '<span class="warn">未登录</span>' : '<span class="muted">未启动</span>');
+            if ($busy) $badge .= ' <span class="warn">忙</span>';
+            $delBtn = $busy ? '<button class="btn" disabled title="处理中，稍后再删">删除</button>'
+                   : '<button class="btn" onclick="delAccount(\''.$aid.'\')">删除</button>';
+            $rows .= '<tr><td><strong>'.$label.'</strong> <code>'.$aid.'</code></td>'
+                  .'<td><a href="'.htmlspecialchars($home).'" target="_blank">'.htmlspecialchars($home).'</a></td>'
+                  .'<td><code>'.$model.'</code></td><td>'.$badge.'</td>'
+                  .'<td><button class="btn" onclick="openLogin(\'deepseek\',\''.htmlspecialchars($aid).'\')">打开登录窗口</button> '.$delBtn.'</td></tr>';
+        }
+    }
     $opc = json_encode([
         'provider' => [
             'deepseek-web-bridge' => [
@@ -170,11 +187,18 @@ if ($method==='GET' && ($path==='/login' || $path==='/login.php')) {
         .'<button class="btn copy" onclick="navigator.clipboard.writeText(document.getElementById(\'opc\').textContent);this.textContent=\'已复制\'">复制</button></div>'
         .'<pre id="opc">'.htmlspecialchars($opc).'</pre>'
       .'</div>'
-      .'<div class="card full"><h2>网页账号登录</h2>'
-        .'<p class="hint">点「打开登录窗口」会弹出本机浏览器加载 homeUrl；登录成功后自动保存 storageState。未登录时 chat 返回 503 provider_unavailable。</p>'
+      .'<div class="card full"><h2>账号池登录</h2>'
+        .'<p class="hint">池内多账号并发：点「打开登录窗口」登录，storageState 按账号保存。'
+        .'当前池: <strong>'.$sum['total'].'</strong> 账号 · 已登录 <strong>'.$sum['loggedIn'].'</strong> · 忙 <strong>'.$sum['busy'].'</strong>。</p>'
         .'<p class="hint">Sidecar 状态: <code>'.SIDECAR_URL.'</code> — <span id="sc">'.($status['ok']?'在线':'离线 (先运行 scripts\\manage.ps1 -Action start)').'</span> '
-        .'· 状态接口 <code>GET /login/status</code></p>'
-        .'<div class="tablewrap"><table><tr><th>Provider</th><th>homeUrl</th><th>model</th><th>状态</th><th>操作</th></tr>'.$rows.'</table></div>'
+        .'· 状态接口 <code>GET /login/status</code> · 账号接口 <code>GET /accounts</code></p>'
+        .'<div class="tablewrap"><table><tr><th>账号</th><th>homeUrl</th><th>model</th><th>状态</th><th>操作</th></tr>'.$rows.'</table></div>'
+        .'<div class="label">添加账号（写入 node/accounts.json 并热加载，无需重启）</div>'
+        .'<div class="ports" style="align-items:center">'
+          .'<input id="newId" placeholder="id 如 acc2" style="padding:.4rem .6rem;border-radius:8px;border:1px solid var(--line);background:#0c0e12;color:var(--fg)">'
+          .'<input id="newLabel" placeholder="备注名（可选）" style="padding:.4rem .6rem;border-radius:8px;border:1px solid var(--line);background:#0c0e12;color:var(--fg)">'
+          .'<button class="btn" onclick="addAccount()">添加账号</button>'
+        .'</div>'
         .'<div class="warnbox" id="loginMsg" style="display:none"></div>'
       .'</div>'
       .'<div class="card"><h2>可用模型（已登录）</h2><ul>'
@@ -183,7 +207,9 @@ if ($method==='GET' && ($path==='/login' || $path==='/login.php')) {
       .'<div class="card"><h2>快速自检</h2><pre>'.$curlSample.'</pre>'
         .'<p class="hint">调试页: <a href="/test.html">/test.html</a> · 网关信息: <a href="/">/</a></p></div>'
       .'</div></div>'
-      .'<script>async function openLogin(p){const msg=document.getElementById("loginMsg");msg.style.display="block";msg.textContent="正在打开 "+p+" 登录窗口...";try{const r=await fetch("/login/open",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:p})});const j=await r.json();msg.textContent=p+": "+JSON.stringify(j);setTimeout(()=>location.reload(),1500);}catch(e){msg.textContent=p+" 打开失败: "+e;}}'
+      .'<script>async function openLogin(p,aid){const msg=document.getElementById("loginMsg");msg.style.display="block";msg.textContent="正在打开 "+(aid||p)+" 登录窗口...";try{const r=await fetch("/login/open",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:p,accountId:aid||undefined})});const j=await r.json();msg.textContent=(aid||p)+": "+JSON.stringify(j);setTimeout(()=>location.reload(),1500);}catch(e){msg.textContent=p+" 打开失败: "+e;}}'
+      .'async function addAccount(){const msg=document.getElementById("loginMsg");msg.style.display="block";const id=document.getElementById("newId").value.trim();const label=document.getElementById("newLabel").value.trim();if(!id){msg.textContent="请填写 id";return;}try{const r=await fetch("/accounts",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id,label:label||undefined,provider:"deepseek"})});const j=await r.json();msg.textContent=r.ok?("已添加 "+id+"（热加载生效）"):("添加失败: "+JSON.stringify(j));if(r.ok)setTimeout(()=>location.reload(),800);}catch(e){msg.textContent="添加失败: "+e;}}'
+      .'async function delAccount(id){if(!confirm("删除账号 "+id+"？（登录态 profile 不删，可再加回）"))return;const msg=document.getElementById("loginMsg");msg.style.display="block";try{const r=await fetch("/accounts?id="+encodeURIComponent(id),{method:"DELETE"});const j=await r.json();msg.textContent=r.ok?("已删除 "+id):("删除失败: "+JSON.stringify(j));if(r.ok)setTimeout(()=>location.reload(),800);}catch(e){msg.textContent="删除失败: "+e;}}'
       .'setInterval(async()=>{try{const r=await fetch("/login/status");const j=await r.json();document.getElementById("sc").textContent=(j&&Object.keys(j).length)?"在线":"离线";}catch(e){document.getElementById("sc").textContent="离线";}},3000);</script>'
       .'</body></html>';
     exit;
@@ -192,7 +218,8 @@ if ($method==='POST' && $path==='/login/open') {
     header("Content-Type: application/json");
     $body = json_decode($rawBody, true) ?: [];
     $pid = $body['provider'] ?? 'deepseek';
-    $r = sidecar_open_login($pid);
+    $aid = isset($body['accountId']) ? (string)$body['accountId'] : null;
+    $r = sidecar_open_login($pid, $aid !== '' ? $aid : null);
     http_response_code($r['ok'] ? 200 : 502);
     echo json_encode($r['ok'] ? ($r['data'] ?: ['ok'=>true]) : ['error'=>['message'=>$r['error'] ?: 'sidecar open failed']], JSON_UNESCAPED_UNICODE);
     exit;
@@ -205,12 +232,41 @@ if ($method==='GET' && $path==='/login/status') {
     echo json_encode($r['ok'] ? ($r['data'] ?: []) : ['error'=>['message'=>$r['error'] ?: 'sidecar status failed']], JSON_UNESCAPED_UNICODE);
     exit;
 }
+if ($path==='/accounts') {
+    header("Content-Type: application/json");
+    if ($method==='POST') {
+        $body = json_decode($rawBody, true) ?: [];
+        if (!isset($body['id']) || !is_string($body['id']) || $body['id']==='') {
+            http_response_code(400);
+            echo json_encode(['ok'=>false,'error'=>'id required'], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+        $r = sidecar_add_account($body);
+        http_response_code($r['ok'] ? 200 : 400);
+        echo json_encode($r['data'] ?: ['ok'=>false,'error'=>$r['error'] ?: 'sidecar add failed'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+    if ($method==='DELETE') {
+        $id = (string)($_GET['id'] ?? '');
+        if ($id==='') {
+            http_response_code(400);
+            echo json_encode(['ok'=>false,'error'=>'id required'], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+        $r = sidecar_remove_account($id);
+        http_response_code($r['ok'] ? 200 : 400);
+        echo json_encode($r['data'] ?: ['ok'=>false,'error'=>$r['error'] ?: 'sidecar remove failed'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+    $r = sidecar_accounts();
+    http_response_code($r['ok'] ? 200 : 502);
+    echo json_encode($r['ok'] ? ($r['data'] ?: []) : ['error'=>['message'=>$r['error'] ?: 'sidecar accounts failed']], JSON_UNESCAPED_UNICODE);
+    exit;
+}
 
 if ($method==='GET' && ($path==='/v1/models' || $path==='/models')) {
     header("Content-Type: application/json");
-    $st = sidecar_login_status();
-    $statusMap = ($st['ok'] && is_array($st['data'])) ? $st['data'] : [];
-    $online = !empty($statusMap['deepseek']['loggedIn']);
+    $online = pool_any_logged_in();
     $meta = [
         'id'=>'deepseek-chat', 'owned_by'=>'deepseek', 'provider'=>'deepseek',
         'description'=>'DeepSeek Chat (web reverse-proxy). 支持图片输入、深度思考/推理、工具调用。',
@@ -270,11 +326,13 @@ if ($method==='GET' && ($path==='/' || $path==='/index.php')) {
         'port'=>LISTEN_PORT,
         'bind'=>BIND_LAN?'0.0.0.0':'127.0.0.1',
         'model'=>DEFAULT_MODEL,
+        'pool'=>pool_summary(),
         'endpoints'=>[
             'GET /health',
-            'GET /login (网页登录页)',
-            'POST /login/open {provider} (打开有头登录窗口)',
-            'GET /login/status[?provider=] (登录状态)',
+            'GET /login (账号池登录页)',
+            'POST /login/open {provider, accountId} (打开有头登录窗口)',
+            'GET /login/status[?account=] (账号池状态)',
+            'GET/POST/DELETE /accounts (账号池增删查, DELETE 带 ?id=)',
             'GET /v1/models',
             'POST /v1/chat/completions (stream / non-stream, tools)',
         ],
@@ -323,14 +381,13 @@ if ($path==='/v1/chat/completions' || $path==='/chat/completions' || $path==='/v
         exit;
     }
 
-    $loginSt = sidecar_login_status($providerId);
-    $isLoggedIn = !empty($loginSt['ok']) && !empty($loginSt['data']['loggedIn']);
+    $isLoggedIn = pool_any_logged_in();
     if (!$isLoggedIn) {
         header("HTTP/1.1 503 Service Unavailable");
         header("Content-Type: application/json");
         echo json_encode([
             'error' => [
-                'message' => "gateway busy: model `{$modelReq}` unavailable; open /login and sign in DeepSeek",
+                'message' => "gateway busy: model `{$modelReq}` unavailable; open /login and sign in DeepSeek (pool empty / none logged in)",
                 'type' => 'server_error',
                 'code' => 'provider_unavailable',
                 'provider' => $providerId,

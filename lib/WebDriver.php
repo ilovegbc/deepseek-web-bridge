@@ -4,7 +4,7 @@
 require_once dirname(__DIR__) . '/config.php';
 require_once __DIR__ . '/Helpers.php';
 
-function sidecar_request(string $path, ?array $post = null, int $timeoutSec = 30) {
+function sidecar_request(string $path, ?array $post = null, int $timeoutSec = 30, string $method = '') {
     $url = SIDECAR_URL . $path;
     $ch = curl_init($url);
     curl_setopt_array($ch, [
@@ -16,6 +16,8 @@ function sidecar_request(string $path, ?array $post = null, int $timeoutSec = 30
     if ($post !== null) {
         curl_setopt($ch, CURLOPT_POST, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($post, JSON_UNESCAPED_UNICODE));
+    } elseif ($method !== '' && strtoupper($method) !== 'GET') {
+        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, strtoupper($method));
     }
     $body = curl_exec($ch);
     $err = curl_error($ch);
@@ -27,13 +29,51 @@ function sidecar_request(string $path, ?array $post = null, int $timeoutSec = 30
     return ['ok' => $code >= 200 && $code < 300, 'code' => $code, 'error' => null, 'data' => $data];
 }
 
-function sidecar_open_login(string $provider): array {
-    return sidecar_request('/login', ['provider' => $provider], 65);
+function sidecar_open_login(string $provider, ?string $accountId = null): array {
+    $post = ['provider' => $provider];
+    if ($accountId !== null && $accountId !== '') $post['accountId'] = $accountId;
+    return sidecar_request('/login', $post, 65);
 }
 
-function sidecar_login_status(?string $provider = null): array {
-    $path = '/login/status' . ($provider ? '?provider=' . rawurlencode($provider) : '');
-    return sidecar_request($path, null, 10);
+function sidecar_login_status(?string $accountId = null): array {
+    $path = '/login/status' . ($accountId ? '?account=' . rawurlencode($accountId) : '');
+    return sidecar_request($path, null, 15);
+}
+
+function sidecar_accounts(): array {
+    return sidecar_request('/accounts', null, 5);
+}
+
+function sidecar_add_account(array $acc): array {
+    return sidecar_request('/accounts', $acc, 8);
+}
+
+function sidecar_remove_account(string $accountId): array {
+    return sidecar_request('/accounts?id=' . rawurlencode($accountId), null, 8, 'DELETE');
+}
+
+/** 池内任一账号已登录则可用 */
+function pool_any_logged_in(): bool {
+    $st = sidecar_login_status();
+    if (!$st['ok'] || !is_array($st['data'])) return false;
+    foreach ($st['data'] as $acc) {
+        if (is_array($acc) && !empty($acc['loggedIn'])) return true;
+    }
+    return false;
+}
+
+function pool_summary(): array {
+    $total = 0; $loggedIn = 0; $busy = 0;
+    $st = sidecar_login_status();
+    if ($st['ok'] && is_array($st['data'])) {
+        foreach ($st['data'] as $acc) {
+            if (!is_array($acc)) continue;
+            $total++;
+            if (!empty($acc['loggedIn'])) $loggedIn++;
+            if (!empty($acc['busy'])) $busy++;
+        }
+    }
+    return ['total' => $total, 'loggedIn' => $loggedIn, 'busy' => $busy];
 }
 
 function sidecar_health(): array {

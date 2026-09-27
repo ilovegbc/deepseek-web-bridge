@@ -7,6 +7,7 @@ const { chromium } = require('playwright');
 const { PROVIDERS, getProvider } = require('./providers');
 const bridge = require('./bridge');
 const { chat } = require('./webdriver');
+const { AccountPool, profilePath } = require('./pool');
 
 const PORT = parseInt(process.env.SIDECAR_PORT || '8090', 10);
 const HOST = process.env.SIDECAR_HOST || '127.0.0.1';
@@ -17,12 +18,7 @@ if (!fs.existsSync(PROFILE_DIR)) fs.mkdirSync(PROFILE_DIR, { recursive: true });
 
 /** @type {import('playwright').Browser|null} */
 let browser = null;
-const sessions = new Map();
-let launching = false;
-
-function profilePath(providerId) {
-  return path.join(PROFILE_DIR, providerId + '.json');
-}
+const pool = new AccountPool();
 
 async function ensureBrowser() {
   if (browser && browser.isConnected()) return browser;
@@ -44,19 +40,36 @@ async function ensureBrowser() {
   return browser;
 }
 
-async function ensureSession(providerId) {
+function startLoginPoll(slot) {
+  if (slot.pollTimer) return;
+  slot.pollTimer = setInterval(async () => {
+    try {
+      if (!slot.page || slot.page.isClosed()) return;
+      await bridge.configurePage(slot.page, slot.def.provider || 'deepseek');
+      const st = await bridge.readState(slot.page);
+      if (st && st.loggedIn) {
+        if (!slot.loggedIn) {
+          slot.loggedIn = true;
+          try {
+            await slot.context.storageState({ path: profilePath(slot.def.id) });
+          } catch (_) {}
+        }
+      } else {
+        slot.loggedIn = false;
+      }
+    } catch (_) {}
+  }, 1000);
+}
+
+async function ensureSession(slot) {
+  const providerId = slot.def.provider || 'deepseek';
   const p = getProvider(providerId);
   if (!p) throw new Error('unknown_provider');
-  if (sessions.has(providerId)) {
-    const s = sessions.get(providerId);
-    if (s.context && !s.context.browser()?.isConnected?.()) {
-      sessions.delete(providerId);
-    } else {
-      return s;
-    }
-  }
+
+  if (slot.page && !slot.page.isClosed() && slot.context) return slot;
+
   const b = await ensureBrowser();
-  const sp = profilePath(providerId);
+  const sp = profilePath(slot.def.id);
   const ctxOpts = {
     viewport: { width: 1280, height: 800 },
     userAgent: p.desktopUserAgent || p.desktopMode
@@ -71,109 +84,95 @@ async function ensureSession(providerId) {
   const page = await context.newPage();
   await page.goto(p.homeUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
   await bridge.configurePage(page, providerId);
-  const session = { context, page, loggedIn: false, loginWindowOpen: false, providerId };
-  sessions.set(providerId, session);
-  startLoginPoll(session);
-  return session;
+  slot.context = context;
+  slot.page = page;
+  startLoginPoll(slot);
+  return slot;
 }
 
-function startLoginPoll(session) {
-  if (session._pollTimer) return;
-  session._pollTimer = setInterval(async () => {
-    try {
-      if (!session.page || session.page.isClosed()) return;
-      await bridge.configurePage(session.page, session.providerId);
-      const st = await bridge.readState(session.page);
-      if (st && st.loggedIn) {
-        if (!session.loggedIn) {
-          session.loggedIn = true;
-          try {
-            await session.context.storageState({ path: profilePath(session.providerId) });
-          } catch (_) {}
-        }
-      } else {
-        session.loggedIn = false;
-      }
-    } catch (_) {}
-  }, 1000);
-}
-
-async function openLoginWindow(providerId) {
-  const session = await ensureSession(providerId);
-  const p = getProvider(providerId);
-  if (session.page.isClosed()) {
-    session.page = await session.context.newPage();
-  }
-  await session.page.goto(p.homeUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
-  await bridge.configurePage(session.page, providerId);
-  await session.page.bringToFront().catch(() => {});
-  session.loginWindowOpen = true;
-  return { ok: true, homeUrl: p.homeUrl, loggedIn: session.loggedIn };
-}
-
-async function getStatus(providerId) {
-  const p = getProvider(providerId);
-  if (!p) return { error: 'unknown_provider' };
-  const session = sessions.get(providerId);
-  if (!session || !session.page || session.page.isClosed()) {
-    return {
-      provider: providerId,
-      homeUrl: p.homeUrl,
-      running: false,
-      loggedIn: false,
-      state: null
-    };
-  }
+async function refreshLogin(slot) {
+  if (!slot.page || slot.page.isClosed()) return false;
   try {
-    await bridge.configurePage(session.page, providerId);
-    const st = await bridge.readState(session.page);
+    await bridge.configurePage(slot.page, slot.def.provider || 'deepseek');
+    const st = await bridge.readState(slot.page);
     if (st && st.loggedIn) {
-      session.loggedIn = true;
-      try { await session.context.storageState({ path: profilePath(providerId) }); } catch (_) {}
+      if (!slot.loggedIn) {
+        slot.loggedIn = true;
+        try { await slot.context.storageState({ path: profilePath(slot.def.id) }); } catch (_) {}
+      }
+      return true;
     }
+    slot.loggedIn = false;
+    return false;
+  } catch (_) {
+    return false;
+  }
+}
+
+async function openLoginWindow(accountId) {
+  pool.reloadConfig();
+  const def = pool.listDefs().find(a => a.id === accountId)
+    || pool.listDefs().find(a => !a.running && !a.loggedIn)
+    || pool.listDefs()[0];
+  if (!def) return { error: 'no accounts configured' };
+  const slot = await pool.ensureSlot({ id: def.id, label: def.label, provider: def.provider, enabled: def.enabled });
+  await ensureSession(slot);
+  const p = getProvider(slot.def.provider || 'deepseek');
+  if (slot.page.isClosed()) {
+    slot.page = await slot.context.newPage();
+  }
+  await slot.page.goto(p.homeUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  await bridge.configurePage(slot.page, p.id);
+  await slot.page.bringToFront().catch(() => {});
+  await refreshLogin(slot);
+  return { ok: true, accountId: def.id, homeUrl: p.homeUrl, loggedIn: slot.loggedIn };
+}
+
+async function getStatus(accountId) {
+  pool.reloadConfig();
+  if (accountId) {
+    const def = pool.listDefs().find(a => a.id === accountId);
+    if (!def) return { error: 'unknown_account' };
+    const slot = pool.slots.get(accountId);
+    if (!slot || !slot.page || slot.page.isClosed()) {
+      return {
+        accountId, label: def.label, provider: def.provider,
+        running: false, loggedIn: false, busy: false, state: null
+      };
+    }
+    await refreshLogin(slot);
     return {
-      provider: providerId,
-      homeUrl: p.homeUrl,
-      running: true,
-      loggedIn: !!(st && st.loggedIn),
-      state: st
+      accountId, label: def.label, provider: def.provider,
+      running: true, loggedIn: slot.loggedIn, busy: slot.busy, state: null
     };
-  } catch (e) {
-    return { provider: providerId, homeUrl: p.homeUrl, running: false, loggedIn: false, state: null, error: String(e.message || e) };
   }
+
+  const out = {};
+  for (const def of pool.listDefs()) {
+    const slot = pool.slots.get(def.id);
+    if (slot && slot.page && !slot.page.isClosed()) {
+      await refreshLogin(slot);
+      out[def.id] = {
+        accountId: def.id, label: def.label, provider: def.provider,
+        running: true, loggedIn: slot.loggedIn, busy: slot.busy, state: null
+      };
+    } else {
+      out[def.id] = {
+        accountId: def.id, label: def.label, provider: def.provider,
+        running: false, loggedIn: false, busy: false, state: null
+      };
+    }
+  }
+  return out;
 }
 
-let chatBusy = false;
-const chatWaiters = [];
-
-function releaseChatSlot() {
-  chatBusy = false;
-  const next = chatWaiters.shift();
-  if (next) next();
-}
-
-async function acquireChatSlot(waitMs) {
-  if (!chatBusy) {
-    chatBusy = true;
-    return true;
+function anyLoggedIn(providerId) {
+  for (const def of pool.listDefs()) {
+    if (def.provider !== (providerId || 'deepseek')) continue;
+    const slot = pool.slots.get(def.id);
+    if (slot && slot.loggedIn) return true;
   }
-  return await new Promise((resolve) => {
-    let done = false;
-    const entry = () => {
-      if (done) return;
-      done = true;
-      chatBusy = true;
-      resolve(true);
-    };
-    chatWaiters.push(entry);
-    setTimeout(() => {
-      if (done) return;
-      done = true;
-      const i = chatWaiters.indexOf(entry);
-      if (i >= 0) chatWaiters.splice(i, 1);
-      resolve(false);
-    }, waitMs);
-  });
+  return false;
 }
 
 async function handleChat(body, res) {
@@ -183,6 +182,7 @@ async function handleChat(body, res) {
   const timeoutSec = body.timeoutSec || CHAT_TIMEOUT_SEC;
   const traceId = body.traceId || String(Date.now());
   const queueWaitMs = Number.isFinite(body.queueWaitMs) ? body.queueWaitMs : 90000;
+  const wantAccount = body.accountId ? String(body.accountId) : null;
 
   if (!prompt) {
     return sendJson(res, 400, { error: { message: 'no message content' } });
@@ -192,26 +192,43 @@ async function handleChat(body, res) {
     return sendJson(res, 400, { error: { message: 'unknown provider' } });
   }
 
-  const got = await acquireChatSlot(queueWaitMs);
-  if (!got) {
-    return sendJson(res, 429, { error: { message: 'gateway busy' } });
+  pool.reloadConfig();
+  const enabled = pool.listDefs().filter(a => a.enabled && a.provider === providerId);
+  if (enabled.length === 0) {
+    return sendJson(res, 503, { error: { message: 'no accounts in pool' }, traceId, reason: 'pool_empty' });
   }
-  let session;
-  try {
-    session = await ensureSession(providerId);
-    if (session.page.isClosed()) {
-      session.page = await session.context.newPage();
-      await session.page.goto(p.homeUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
-      await bridge.configurePage(session.page, providerId);
-    } else {
-      await bridge.configurePage(session.page, providerId);
-    }
-    await session.page.bringToFront().catch(() => {});
 
-    let st = null;
-    try { st = await bridge.readState(session.page); } catch (_) {}
-    const loggedIn = !!(st && st.loggedIn);
-    session.loggedIn = loggedIn;
+  let def = null;
+  if (wantAccount) {
+    def = enabled.find(a => a.id === wantAccount) || null;
+    if (!def) return sendJson(res, 400, { error: { message: 'unknown accountId' }, traceId });
+    const slot = pool.slots.get(def.id);
+    if (slot && slot.busy) {
+      def = await pool.acquire(providerId, queueWaitMs).catch(() => null) || def;
+    }
+  } else {
+    def = await acquireWithProvider(pool, providerId, queueWaitMs);
+  }
+
+  if (!def) {
+    return sendJson(res, 429, { error: { message: 'gateway busy: pool exhausted' }, traceId, reason: 'pool_busy' });
+  }
+
+  pool.markBusy(def.id);
+  let slot = null;
+  try {
+    slot = await pool.ensureSlot(def);
+    await ensureSession(slot);
+    if (slot.page.isClosed()) {
+      slot.page = await slot.context.newPage();
+      await slot.page.goto(p.homeUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+      await bridge.configurePage(slot.page, providerId);
+    } else {
+      await bridge.configurePage(slot.page, providerId);
+    }
+    await slot.page.bringToFront().catch(() => {});
+
+    const loggedIn = await refreshLogin(slot);
     if (!loggedIn) {
       if (stream) {
         res.writeHead(503, {
@@ -220,11 +237,14 @@ async function handleChat(body, res) {
           'Connection': 'close',
           'Access-Control-Allow-Origin': '*'
         });
-        res.write(JSON.stringify({ type: 'error', message: 'gateway busy' }) + '\n');
+        res.write(JSON.stringify({ type: 'error', message: 'gateway busy: account not logged in' }) + '\n');
         res.end();
         return;
       }
-      return sendJson(res, 503, { error: { message: 'gateway busy' }, traceId, reason: 'not_logged_in' });
+      return sendJson(res, 503, {
+        error: { message: 'gateway busy: account not logged in' },
+        traceId, accountId: def.id, reason: 'not_logged_in'
+      });
     }
 
     if (stream) {
@@ -239,28 +259,43 @@ async function handleChat(body, res) {
           res.write(JSON.stringify({ type: 'chunk', kind, chunk }) + '\n');
         } catch (_) {}
       };
-      const result = await chat(session.page, providerId, prompt, { timeoutSec, onChunk });
+      const result = await chat(slot.page, providerId, prompt, { timeoutSec, onChunk });
       try {
-        res.write(JSON.stringify({ type: 'done', thinking: result.thinking, answer: result.answer, traceId }) + '\n');
+        res.write(JSON.stringify({
+          type: 'done', thinking: result.thinking, answer: result.answer,
+          traceId, accountId: def.id
+        }) + '\n');
       } catch (_) {}
       res.end();
     } else {
-      const result = await chat(session.page, providerId, prompt, { timeoutSec });
-      try { await session.context.storageState({ path: profilePath(providerId) }); } catch (_) {}
+      const result = await chat(slot.page, providerId, prompt, { timeoutSec });
+      try { await slot.context.storageState({ path: profilePath(def.id) }); } catch (_) {}
       if (!result.answer && !result.thinking) {
-        return sendJson(res, 503, { error: { message: 'gateway busy' }, traceId });
+        return sendJson(res, 503, { error: { message: 'gateway busy' }, traceId, accountId: def.id });
       }
-      sendJson(res, 200, { thinking: result.thinking, answer: result.answer, provider: providerId, model: p.model, traceId });
+      sendJson(res, 200, {
+        thinking: result.thinking, answer: result.answer,
+        provider: providerId, model: p.model, traceId, accountId: def.id
+      });
     }
   } catch (e) {
     if (!res.headersSent) {
-      sendJson(res, 500, { error: { message: String(e.message || e) }, traceId });
+      sendJson(res, 500, { error: { message: String(e.message || e) }, traceId, accountId: def && def.id });
     } else {
       try { res.write(JSON.stringify({ type: 'error', message: String(e.message || e) }) + '\n'); } catch (_) {}
       res.end();
     }
   } finally {
-    releaseChatSlot();
+    pool.markIdle(def.id);
+  }
+}
+
+async function acquireWithProvider(poolRef, providerId, waitMs) {
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    const def = await poolRef.acquire(providerId, Math.min(2000, Math.max(500, deadline - Date.now())));
+    if (def) return def;
+    if (Date.now() >= deadline) return null;
   }
 }
 
@@ -302,31 +337,50 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Headers': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
         'Content-Length': '0'
       });
       return res.end();
     }
 
     if (route === '/health') {
-      return sendJson(res, 200, { ok: true, sidecar: true, port: PORT, sessions: sessions.size });
+      return sendJson(res, 200, {
+        ok: true, sidecar: true, port: PORT,
+        accounts: pool.listDefs().length,
+        busy: pool.busyCount(),
+        loggedIn: pool.loggedInCount()
+      });
+    }
+
+    if (route === '/accounts' && req.method === 'GET') {
+      return sendJson(res, 200, {
+        strategy: pool.strategy(),
+        accounts: pool.snapshot()
+      });
+    }
+
+    if (route === '/accounts' && req.method === 'POST') {
+      const body = await readBody(req);
+      const r = pool.addAccount(body);
+      return sendJson(res, r.ok ? 200 : 400, r);
+    }
+
+    if (route === '/accounts' && req.method === 'DELETE') {
+      const id = u.searchParams.get('id') || '';
+      const r = await pool.removeAccount(id);
+      return sendJson(res, r.ok ? 200 : 400, r);
     }
 
     if (route === '/login' && req.method === 'POST') {
       const body = await readBody(req);
-      const providerId = body.provider || 'deepseek';
-      const r = await openLoginWindow(providerId);
-      return sendJson(res, 200, r);
+      const r = await openLoginWindow(body.accountId || null);
+      return sendJson(res, r.error ? 400 : 200, r);
     }
 
     if (route === '/login/status' && req.method === 'GET') {
-      const providerId = u.searchParams.get('provider');
-      if (providerId) {
-        return sendJson(res, 200, await getStatus(providerId));
-      }
-      const all = {};
-      for (const id of Object.keys(PROVIDERS)) all[id] = await getStatus(id);
-      return sendJson(res, 200, all);
+      const accountId = u.searchParams.get('account') || u.searchParams.get('accountId');
+      const data = await getStatus(accountId);
+      return sendJson(res, 200, data);
     }
 
     if (route === '/chat' && req.method === 'POST') {
@@ -351,15 +405,12 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`[sidecar] listening http://${HOST}:${PORT}`);
-  console.log(`[sidecar] profiles: ${PROFILE_DIR}`);
+  console.log(`[sidecar] accounts: ${pool.listDefs().length}, profiles: ${PROFILE_DIR}`);
 });
 
 async function shutdown() {
   try {
-    for (const s of sessions.values()) {
-      if (s._pollTimer) clearInterval(s._pollTimer);
-      try { await s.context?.close(); } catch (_) {}
-    }
+    await pool.closeAll();
     if (browser) await browser.close();
   } catch (_) {}
   process.exit(0);

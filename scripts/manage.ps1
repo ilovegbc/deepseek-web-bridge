@@ -329,11 +329,14 @@ function Invoke-Start {
   Write-Ok "sidecar health OK"
 
   $bind = if ($env:GATEWAY_BIND) { $env:GATEWAY_BIND } else { '0.0.0.0' }
+  # PHP 内置服务器默认单线程，会卡住并发号池请求；多 worker 才能让多账号并发
+  $workers = if ($env:PHP_CLI_SERVER_WORKERS) { $env:PHP_CLI_SERVER_WORKERS } else { '8' }
+  $env:PHP_CLI_SERVER_WORKERS = $workers
   $gw = Start-Process -FilePath $php -ArgumentList @('-S', "${bind}:$GwPort", '-t', $Root) `
     -WorkingDirectory $Root -WindowStyle Hidden `
     -RedirectStandardOutput $gwLog -RedirectStandardError $gwErr -PassThru
   $gw.Id | Out-File -FilePath (Join-Path $RunDir 'gateway.pid') -Encoding ascii
-  Write-Ok "gateway pid $($gw.Id) port $GwPort"
+  Write-Ok "gateway pid $($gw.Id) port $GwPort (PHP_CLI_SERVER_WORKERS=$workers)"
 
   if (-not (Wait-Http "http://127.0.0.1:$GwPort/health" 15)) {
     Write-Bad "gateway 健康检查超时 — 见 $gwErr"

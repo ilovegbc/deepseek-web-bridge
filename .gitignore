@@ -13,6 +13,7 @@ Thumbs.db
 
 # Login state / cookies / local config (never commit)
 node/profiles/
+node/accounts.json
 node/.local/
 *.local.php
 config.local.php

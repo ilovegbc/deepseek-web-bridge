@@ -1,0 +1,17 @@
+{
+  "strategy": "least_busy",
+  "accounts": [
+    {
+      "id": "acc1",
+      "label": "账号1",
+      "provider": "deepseek",
+      "enabled": true
+    },
+    {
+      "id": "acc2",
+      "label": "账号2",
+      "provider": "deepseek",
+      "enabled": true
+    }
+  ]
+}

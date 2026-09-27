@@ -24,9 +24,9 @@ PHP 网关 :8080
     │  HTTP
     ▼
 Playwright sidecar :8090
-    │  单并发队列 · 登录态 · 页面自动化
+    │  号池（多账号多上下文）· 空闲槽位分配 · 排队等待 · 页面自动化
     ▼
-https://chat.deepseek.com/  (真实网页会话)
+https://chat.deepseek.com/  (真实网页会话，每账号独立登录态)
 ```
 
 ### 无状态会话策略
@@ -38,6 +38,25 @@ https://chat.deepseek.com/  (真实网页会话)
 5. 上下文压缩 / 整理类请求走同一路径，无需特殊分支  
 
 对客户端完全无状态：任意 OpenAI 兼容客户端每次带上完整历史即可。
+
+### 号池（Account Pool）
+
+单账号单会话无法并发：一条 chat 占用页面时，其他请求只能排队。号池用**多账号**解决：
+
+- 配置：`/login` 页面直接**增删账号**（写入 `node/accounts.json` 并热加载，无需重启）；文件在 gitignore，模板见 `node/accounts.example.json`  
+- 每账号独立浏览器 context + 独立 `profiles/{id}.json` 登录态，互不干扰  
+- 策略：`least_busy`（默认，选最闲）或 `round_robin`（改 `accounts.json` 的 `strategy` 后重启 sidecar）  
+- 并发：请求按 `accountId` 分配空闲槽位；全忙时**排队等待**，槽位释放即接管，超时返回 504  
+- 登录：`/login` 页逐账号「打开登录窗口」，storageState 按账号保存；**任一账号已登录**即视为可用  
+- 并发上限还取决于 PHP 网关：`manage.ps1` 启动时默认设置 `PHP_CLI_SERVER_WORKERS=8`（PHP 内置服务器单线程会卡住并发）  
+
+```powershell
+# 也可走 HTTP 直接管理（与页面同源 /accounts）
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8080/accounts `
+  -ContentType 'application/json' -Body '{"id":"acc2","label":"账号2"}'
+Invoke-RestMethod -Uri http://127.0.0.1:8080/accounts
+Invoke-RestMethod -Method Delete -Uri 'http://127.0.0.1:8080/accounts?id=acc2'
+```
 
 ## 环境要求（最低）
 
@@ -128,6 +147,7 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 | `GATEWAY_BIND` | `0.0.0.0` | 监听地址（`127.0.0.1` 仅本机） |
 | `API_KEY` | 见 `config.php` | 覆盖鉴权 Key |
 | `CHAT_TIMEOUT_SEC` | `120` | 单次 chat 超时 |
+| `PHP_CLI_SERVER_WORKERS` | `8` | PHP 内置服务器并发 worker（号池并发关键） |
 
 自定义端口时，**`GATEWAY_PORT` / `SIDECAR_PORT` 必须一致**传给 PHP 进程与 sidecar；`manage.ps1 -Action start` 会自动写入状态并导出环境变量，改端口请**停止后重新启动**。
 
@@ -135,14 +155,16 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/health` | 健康检查 |
-| GET | `/login` | 网页登录页 |
-| POST | `/login/open` | 打开有头浏览器登录窗口 `{"provider":"deepseek"}` |
-| GET | `/login/status` | 登录状态 JSON |
-| GET | `/v1/models` | 模型列表 |
+| GET | `/health` | 健康检查（含号池 busy / loggedIn） |
+| GET | `/login` | 账号池登录页（增删账号 + 逐个登录） |
+| POST | `/login/open` | 打开登录窗口 `{"provider":"deepseek","accountId":"acc1"}` |
+| GET | `/login/status` | 账号池状态 JSON（按 accountId 键控） |
+| GET/POST/DELETE | `/accounts` | 账号池增删查（POST `{"id","label"}`；DELETE `?id=`；写入 accounts.json 热加载） |
+| GET | `/v1/models` | 模型列表（任一账号已登录即 available） |
 | POST | `/v1/chat/completions` | OpenAI 兼容 chat（stream / non-stream / tools） |
+| GET | `/accounts`（sidecar :8090） | sidecar 直连：同上（仅 PHP 内部 / 本机调试用） |
 
-鉴权：除 health / login 相关路径外，需 `Authorization: Bearer <API_KEY>`，与 `config.php` 中 `API_KEY` 全等。
+鉴权：除 health / login 相关 / 账号池（`/accounts`）路径外，需 `Authorization: Bearer <API_KEY>`，与 `config.php` 中 `API_KEY` 全等。
 
 ## 目录结构
 
@@ -156,11 +178,14 @@ deepseek-web-bridge/
 │   └── WebDriver.php      # sidecar HTTP 客户端 + model→provider
 ├── node/
 │   ├── package.json       # playwright 依赖
-│   ├── sidecar.js         # HTTP sidecar：/login /chat /health
+│   ├── sidecar.js         # HTTP sidecar：/login /chat /health /accounts
+│   ├── pool.js            # 号池：AccountPool 分配 / 排队 / 热加载
+│   ├── accounts.example.json  # 号池配置模板（复制为 accounts.json）
+│   ├── test-pool.js       # 号池单测
 │   ├── providers.js       # DeepSeek 选择器与自动化配置
 │   ├── bridge.js          # 页面状态读取 / send / freshChat
 │   ├── webdriver.js       # chat 状态机
-│   └── profiles/          # 登录 storageState（已 gitignore）
+│   └── profiles/          # 每账号 storageState（已 gitignore）
 ├── scripts/
 │   └── manage.ps1         # 唯一管理脚本：检测/依赖/启动/停止菜单
 ├── test.html              # 本地调试页
