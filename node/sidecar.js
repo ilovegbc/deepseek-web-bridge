@@ -16,28 +16,45 @@ const CHAT_TIMEOUT_SEC = parseInt(process.env.CHAT_TIMEOUT_SEC || '120', 10);
 
 if (!fs.existsSync(PROFILE_DIR)) fs.mkdirSync(PROFILE_DIR, { recursive: true });
 
-/** @type {import('playwright').Browser|null} */
-let browser = null;
+/** @type {import('playwright').Browser|null} 工作会话（默认无头后台，N 账号全部在线） */
+let workerBrowser = null;
+/** @type {import('playwright').Browser|null} 共用登录窗口（有头，仅登录时用） */
+let loginBrowser = null;
+const HEADLESS_WORKERS = process.env.POOL_HEADLESS !== '0';
 const pool = new AccountPool();
 
-async function ensureBrowser() {
-  if (browser && browser.isConnected()) return browser;
+function findChromeExecutable() {
   const candidates = [
     process.env.CHROME_PATH,
     'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
     'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'
   ].filter(Boolean);
-  let executablePath = null;
   for (const c of candidates) {
-    try { if (fs.existsSync(c)) { executablePath = c; break; } } catch (_) {}
+    try { if (fs.existsSync(c)) return c; } catch (_) {}
   }
+  return null;
+}
+
+async function launchBrowser(headless) {
   const launchOpts = {
-    headless: false,
-    args: ['--disable-blink-features=AutomationControlled', '--no-first-run']
+    headless,
+    args: ['--disable-blink-features=AutomationControlled', '--no-first-run', '--no-default-browser-check']
   };
+  const executablePath = findChromeExecutable();
   if (executablePath) launchOpts.executablePath = executablePath;
-  browser = await chromium.launch(launchOpts);
-  return browser;
+  return chromium.launch(launchOpts);
+}
+
+async function ensureWorkerBrowser() {
+  if (workerBrowser && workerBrowser.isConnected()) return workerBrowser;
+  workerBrowser = await launchBrowser(HEADLESS_WORKERS);
+  return workerBrowser;
+}
+
+async function ensureLoginBrowser() {
+  if (loginBrowser && loginBrowser.isConnected()) return loginBrowser;
+  loginBrowser = await launchBrowser(false);
+  return loginBrowser;
 }
 
 function startLoginPoll(slot) {
@@ -66,9 +83,20 @@ async function ensureSession(slot) {
   const p = getProvider(providerId);
   if (!p) throw new Error('unknown_provider');
 
-  if (slot.page && !slot.page.isClosed() && slot.context) return slot;
+  if (slot.context) {
+    let connected = false;
+    try { connected = !!slot.context.browser()?.isConnected?.(); } catch (_) {}
+    if (connected) {
+      if (slot.page && !slot.page.isClosed()) return slot;
+      slot.page = await slot.context.newPage();
+      await slot.page.goto(p.homeUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+      await bridge.configurePage(slot.page, providerId);
+      startLoginPoll(slot);
+      return slot;
+    }
+  }
 
-  const b = await ensureBrowser();
+  const b = await ensureWorkerBrowser();
   const sp = profilePath(slot.def.id);
   const ctxOpts = {
     viewport: { width: 1280, height: 800 },
@@ -109,23 +137,151 @@ async function refreshLogin(slot) {
   }
 }
 
+// ============ 共用登录窗口 ============
+// 全池只保留一个可见窗口，按账号逐个登录；登录成功后自动保存并转为后台无头会话。
+const loginWin = { context: null, page: null, targetAccountId: null, pollTimer: null, saved: false };
+
+async function ensureLoginContext() {
+  if (loginWin.context && loginWin.page && !loginWin.page.isClosed()) return loginWin;
+  const b = await ensureLoginBrowser();
+  if (loginWin.context) { try { await loginWin.context.close(); } catch (_) {} }
+  const context = await b.newContext({
+    viewport: { width: 1280, height: 800 },
+    ignoreHTTPSErrors: true
+  });
+  loginWin.context = context;
+  loginWin.page = await context.newPage();
+  return loginWin;
+}
+
+function stopCapture() {
+  if (loginWin.pollTimer) {
+    clearInterval(loginWin.pollTimer);
+    loginWin.pollTimer = null;
+  }
+}
+
+async function captureIntoWorker(accountId) {
+  const def = pool.listDefs().find(a => a.id === accountId);
+  if (!def) return;
+  const slot = await pool.ensureSlot(def);
+  if (slot.context) {
+    try { await slot.context.close(); } catch (_) {}
+    slot.context = null;
+    slot.page = null;
+    slot.loggedIn = false;
+  }
+  if (slot.pollTimer) { clearInterval(slot.pollTimer); slot.pollTimer = null; }
+  await ensureSession(slot);
+  await refreshLogin(slot);
+}
+
+function startCapture(accountId) {
+  stopCapture();
+  loginWin.targetAccountId = accountId;
+  loginWin.saved = false;
+  loginWin.pollTimer = setInterval(async () => {
+    try {
+      if (!loginWin.page || loginWin.page.isClosed()) return;
+      const def = pool.listDefs().find(a => a.id === accountId);
+      if (!def) return;
+      await bridge.configurePage(loginWin.page, def.provider || 'deepseek');
+      const st = await bridge.readState(loginWin.page);
+      if (st && st.loggedIn) {
+        stopCapture();
+        try { await loginWin.context.storageState({ path: profilePath(accountId) }); } catch (_) {}
+        loginWin.saved = true;
+        await captureIntoWorker(accountId).catch(() => {});
+      }
+    } catch (_) {}
+  }, 1500);
+}
+
+function loginWindowInfo() {
+  return {
+    open: !!(loginWin.context && loginWin.page && !loginWin.page.isClosed()),
+    targetAccountId: loginWin.targetAccountId,
+    saved: loginWin.saved
+  };
+}
+
+async function closeLoginWindow() {
+  stopCapture();
+  loginWin.targetAccountId = null;
+  loginWin.saved = false;
+  if (loginWin.context) { try { await loginWin.context.close(); } catch (_) {} }
+  loginWin.context = null;
+  loginWin.page = null;
+  if (loginBrowser) { try { await loginBrowser.close(); } catch (_) {} }
+  loginBrowser = null;
+  return { ok: true };
+}
+
 async function openLoginWindow(accountId) {
   pool.reloadConfig();
   const def = pool.listDefs().find(a => a.id === accountId)
-    || pool.listDefs().find(a => !a.running && !a.loggedIn)
+    || pool.listDefs().find(a => !a.loggedIn)
     || pool.listDefs()[0];
   if (!def) return { error: 'no accounts configured' };
-  const slot = await pool.ensureSlot({ id: def.id, label: def.label, provider: def.provider, enabled: def.enabled });
-  await ensureSession(slot);
-  const p = getProvider(slot.def.provider || 'deepseek');
-  if (slot.page.isClosed()) {
-    slot.page = await slot.context.newPage();
+  const p = getProvider(def.provider || 'deepseek');
+  const win = await ensureLoginContext();
+
+  const sameTarget = loginWin.targetAccountId === def.id
+    && loginWin.page && !loginWin.page.isClosed() && !loginWin.saved;
+  if (sameTarget) {
+    await loginWin.page.bringToFront().catch(() => {});
+    return { ok: true, accountId: def.id, homeUrl: p.homeUrl, reused: true, saved: false };
   }
-  await slot.page.goto(p.homeUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
-  await bridge.configurePage(slot.page, p.id);
-  await slot.page.bringToFront().catch(() => {});
-  await refreshLogin(slot);
-  return { ok: true, accountId: def.id, homeUrl: p.homeUrl, loggedIn: slot.loggedIn };
+
+  stopCapture();
+  loginWin.targetAccountId = def.id;
+  loginWin.saved = false;
+  // 清掉登录窗口里上一个账号的会话；后台工作会话不受影响，仍然在线
+  try { await win.context.clearCookies(); } catch (_) {}
+  try {
+    await win.page.goto(p.homeUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await win.page.evaluate(() => { try { localStorage.clear(); sessionStorage.clear(); } catch (_) {} });
+    await win.page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  } catch (_) {}
+  await bridge.configurePage(win.page, p.id).catch(() => {});
+  await win.page.bringToFront().catch(() => {});
+  startCapture(def.id);
+  return { ok: true, accountId: def.id, homeUrl: p.homeUrl, saved: false };
+}
+
+// ============ 后台预热 / 自愈 ============
+// 已登录过的账号在启动时全部转为后台无头会话（全部在线），并定期自愈掉线会话
+async function warmupAll() {
+  pool.reloadConfig();
+  for (const def of pool.listDefs()) {
+    if (def.enabled === false) continue;
+    if (!fs.existsSync(profilePath(def.id))) continue;
+    try {
+      const slot = await pool.ensureSlot(def);
+      if (!slot.page || slot.page.isClosed()) await ensureSession(slot);
+      await refreshLogin(slot);
+    } catch (_) {}
+  }
+}
+
+let reconcileTimer = null;
+function startReconcile() {
+  if (reconcileTimer) return;
+  reconcileTimer = setInterval(async () => {
+    try {
+      pool.reloadConfig();
+      for (const def of pool.listDefs()) {
+        if (def.enabled === false) continue;
+        if (!fs.existsSync(profilePath(def.id))) continue;
+        const slot = await pool.ensureSlot(def);
+        if (slot.busy) continue;
+        if (!slot.page || slot.page.isClosed()) {
+          await ensureSession(slot);
+          await refreshLogin(slot);
+        }
+      }
+    } catch (_) {}
+  }, 30000);
 }
 
 async function getStatus(accountId) {
@@ -348,7 +504,9 @@ const server = http.createServer(async (req, res) => {
         ok: true, sidecar: true, port: PORT,
         accounts: pool.listDefs().length,
         busy: pool.busyCount(),
-        loggedIn: pool.loggedInCount()
+        loggedIn: pool.loggedInCount(),
+        headless: HEADLESS_WORKERS,
+        loginWindow: loginWindowInfo()
       });
     }
 
@@ -375,6 +533,15 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       const r = await openLoginWindow(body.accountId || null);
       return sendJson(res, r.error ? 400 : 200, r);
+    }
+
+    if (route === '/login/close' && req.method === 'POST') {
+      const r = await closeLoginWindow();
+      return sendJson(res, 200, r);
+    }
+
+    if (route === '/login/window' && req.method === 'GET') {
+      return sendJson(res, 200, loginWindowInfo());
     }
 
     if (route === '/login/status' && req.method === 'GET') {
@@ -405,13 +572,19 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`[sidecar] listening http://${HOST}:${PORT}`);
-  console.log(`[sidecar] accounts: ${pool.listDefs().length}, profiles: ${PROFILE_DIR}`);
+  console.log(`[sidecar] accounts: ${pool.listDefs().length}, profiles: ${PROFILE_DIR}, headlessWorkers: ${HEADLESS_WORKERS}`);
+  warmupAll()
+    .then(() => console.log(`[sidecar] warmup done: loggedIn=${pool.loggedInCount()}/${pool.listDefs().length}`))
+    .catch(() => {});
+  startReconcile();
 });
 
 async function shutdown() {
   try {
+    stopCapture();
     await pool.closeAll();
-    if (browser) await browser.close();
+    if (loginBrowser) await loginBrowser.close();
+    if (workerBrowser) await workerBrowser.close();
   } catch (_) {}
   process.exit(0);
 }

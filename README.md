@@ -24,7 +24,8 @@ PHP 网关 :8080
     │  HTTP
     ▼
 Playwright sidecar :8090
-    │  号池（多账号多上下文）· 空闲槽位分配 · 排队等待 · 页面自动化
+    │  号池：多账号会话全部后台在线（默认无头、不占窗口）
+    │  空闲槽位分配 · 排队等待 · 共用 1 个登录窗口逐个换号登录
     ▼
 https://chat.deepseek.com/  (真实网页会话，每账号独立登录态)
 ```
@@ -44,18 +45,20 @@ https://chat.deepseek.com/  (真实网页会话，每账号独立登录态)
 单账号单会话无法并发：一条 chat 占用页面时，其他请求只能排队。号池用**多账号**解决：
 
 - 配置：`/login` 页面直接**增删账号**（写入 `node/accounts.json` 并热加载，无需重启）；文件在 gitignore，模板见 `node/accounts.example.json`  
-- 每账号独立浏览器 context + 独立 `profiles/{id}.json` 登录态，互不干扰  
+- **后台在线**：每个已登录账号一个独立浏览器上下文（登录态隔离），默认**无头运行、不占窗口**；启动时自动预热已登录账号，掉线自动重连（自愈轮询 30s）  
+- **登录**：全池共用**一个可见窗口**。点某账号「登录此账号」→ 窗口自动清掉上个会话并打开登录页 → 登录成功后自动保存并转入后台在线 → 继续点下一个账号，在同一窗口换号继续。无需每个账号开一个窗口；点「关闭登录窗口」可收掉窗口（不影响后台会话）  
 - 策略：`least_busy`（默认，选最闲）或 `round_robin`（改 `accounts.json` 的 `strategy` 后重启 sidecar）  
 - 并发：请求按 `accountId` 分配空闲槽位；全忙时**排队等待**，槽位释放即接管，超时返回 504  
-- 登录：`/login` 页逐账号「打开登录窗口」，storageState 按账号保存；**任一账号已登录**即视为可用  
+- 无头被站点风控时可用环境变量 `POOL_HEADLESS=0` 切回有窗口调试模式再排查  
 - 并发上限还取决于 PHP 网关：`manage.ps1` 启动时默认设置 `PHP_CLI_SERVER_WORKERS=8`（PHP 内置服务器单线程会卡住并发）  
 
 ```powershell
-# 也可走 HTTP 直接管理（与页面同源 /accounts）
+# 也可走 HTTP 直接管理（与页面同源）
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8080/accounts `
   -ContentType 'application/json' -Body '{"id":"acc2","label":"账号2"}'
 Invoke-RestMethod -Uri http://127.0.0.1:8080/accounts
 Invoke-RestMethod -Method Delete -Uri 'http://127.0.0.1:8080/accounts?id=acc2'
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8080/login/close   # 关闭共用登录窗口
 ```
 
 ## 环境要求（最低）
@@ -148,6 +151,7 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 | `API_KEY` | 见 `config.php` | 覆盖鉴权 Key |
 | `CHAT_TIMEOUT_SEC` | `120` | 单次 chat 超时 |
 | `PHP_CLI_SERVER_WORKERS` | `8` | PHP 内置服务器并发 worker（号池并发关键） |
+| `POOL_HEADLESS` | `1` | `0` = 工作会话改有窗口（调试风控问题用） |
 
 自定义端口时，**`GATEWAY_PORT` / `SIDECAR_PORT` 必须一致**传给 PHP 进程与 sidecar；`manage.ps1 -Action start` 会自动写入状态并导出环境变量，改端口请**停止后重新启动**。
 
@@ -157,7 +161,8 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 |------|------|------|
 | GET | `/health` | 健康检查（含号池 busy / loggedIn） |
 | GET | `/login` | 账号池登录页（增删账号 + 逐个登录） |
-| POST | `/login/open` | 打开登录窗口 `{"provider":"deepseek","accountId":"acc1"}` |
+| POST | `/login/open` | 共用登录窗口：打开/切换账号 `{"provider":"deepseek","accountId":"acc1"}` |
+| POST | `/login/close` | 关闭共用登录窗口（后台会话不受影响） |
 | GET | `/login/status` | 账号池状态 JSON（按 accountId 键控） |
 | GET/POST/DELETE | `/accounts` | 账号池增删查（POST `{"id","label"}`；DELETE `?id=`；写入 accounts.json 热加载） |
 | GET | `/v1/models` | 模型列表（任一账号已登录即 available） |

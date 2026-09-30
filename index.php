@@ -58,7 +58,7 @@ header("Access-Control-Allow-Methods: *");
 if ($path==='/health' || $path==='/_tunnel_probe' || $path==='/__tunnel_probe'
     || $path==='/' || $path==='/index.php'
     || $path==='/login' || $path==='/login.php' || $path==='/login/status'
-    || $path==='/login/open' || $path==='/accounts') {
+    || $path==='/login/open' || $path==='/login/close' || $path==='/accounts') {
     // public routes
 } else {
     if (API_KEY !== '') {
@@ -91,7 +91,7 @@ if ($method==='GET' && ($path==='/login' || $path==='/login.php')) {
     if (empty($all)) {
         $badge = '<span class="muted">未启动</span>';
         $rows .= '<tr><td><strong>acc1</strong></td><td><a href="'.htmlspecialchars($home).'" target="_blank">'.htmlspecialchars($home).'</a></td><td><code>'.$model.'</code></td><td>'.$badge.'</td>'
-              .'<td><button class="btn" onclick="openLogin(\'deepseek\',\'\')">打开登录窗口</button></td></tr>';
+              .'<td><button class="btn" onclick="openLogin(\'deepseek\',\'\')">登录此账号</button></td></tr>';
     } else {
         foreach ($all as $key => $st) {
             $aid = (string)($st['accountId'] ?? $key);
@@ -107,7 +107,7 @@ if ($method==='GET' && ($path==='/login' || $path==='/login.php')) {
             $rows .= '<tr><td><strong>'.$label.'</strong> <code>'.$aid.'</code></td>'
                   .'<td><a href="'.htmlspecialchars($home).'" target="_blank">'.htmlspecialchars($home).'</a></td>'
                   .'<td><code>'.$model.'</code></td><td>'.$badge.'</td>'
-                  .'<td><button class="btn" onclick="openLogin(\'deepseek\',\''.htmlspecialchars($aid).'\')">打开登录窗口</button> '.$delBtn.'</td></tr>';
+                  .'<td><button class="btn" onclick="openLogin(\'deepseek\',\''.htmlspecialchars($aid).'\')">登录此账号</button> '.$delBtn.'</td></tr>';
         }
     }
     $opc = json_encode([
@@ -188,7 +188,8 @@ if ($method==='GET' && ($path==='/login' || $path==='/login.php')) {
         .'<pre id="opc">'.htmlspecialchars($opc).'</pre>'
       .'</div>'
       .'<div class="card full"><h2>账号池登录</h2>'
-        .'<p class="hint">池内多账号并发：点「打开登录窗口」登录，storageState 按账号保存。'
+        .'<p class="hint">多账号全部后台在线（工作会话无窗口，不占桌面）：登录共用一个窗口，点任意账号「打开登录窗口」→ 在其中登录 → '
+        .'自动保存并转入后台在线 → 继续点下一个账号，同一窗口直接换号登录，无需关窗。'
         .'当前池: <strong>'.$sum['total'].'</strong> 账号 · 已登录 <strong>'.$sum['loggedIn'].'</strong> · 忙 <strong>'.$sum['busy'].'</strong>。</p>'
         .'<p class="hint">Sidecar 状态: <code>'.SIDECAR_URL.'</code> — <span id="sc">'.($status['ok']?'在线':'离线 (先运行 scripts\\manage.ps1 -Action start)').'</span> '
         .'· 状态接口 <code>GET /login/status</code> · 账号接口 <code>GET /accounts</code></p>'
@@ -198,6 +199,7 @@ if ($method==='GET' && ($path==='/login' || $path==='/login.php')) {
           .'<input id="newId" placeholder="id 如 acc2" style="padding:.4rem .6rem;border-radius:8px;border:1px solid var(--line);background:#0c0e12;color:var(--fg)">'
           .'<input id="newLabel" placeholder="备注名（可选）" style="padding:.4rem .6rem;border-radius:8px;border:1px solid var(--line);background:#0c0e12;color:var(--fg)">'
           .'<button class="btn" onclick="addAccount()">添加账号</button>'
+          .'<button class="btn" onclick="closeLoginWin()">关闭登录窗口</button>'
         .'</div>'
         .'<div class="warnbox" id="loginMsg" style="display:none"></div>'
       .'</div>'
@@ -210,6 +212,7 @@ if ($method==='GET' && ($path==='/login' || $path==='/login.php')) {
       .'<script>async function openLogin(p,aid){const msg=document.getElementById("loginMsg");msg.style.display="block";msg.textContent="正在打开 "+(aid||p)+" 登录窗口...";try{const r=await fetch("/login/open",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:p,accountId:aid||undefined})});const j=await r.json();msg.textContent=(aid||p)+": "+JSON.stringify(j);setTimeout(()=>location.reload(),1500);}catch(e){msg.textContent=p+" 打开失败: "+e;}}'
       .'async function addAccount(){const msg=document.getElementById("loginMsg");msg.style.display="block";const id=document.getElementById("newId").value.trim();const label=document.getElementById("newLabel").value.trim();if(!id){msg.textContent="请填写 id";return;}try{const r=await fetch("/accounts",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id,label:label||undefined,provider:"deepseek"})});const j=await r.json();msg.textContent=r.ok?("已添加 "+id+"（热加载生效）"):("添加失败: "+JSON.stringify(j));if(r.ok)setTimeout(()=>location.reload(),800);}catch(e){msg.textContent="添加失败: "+e;}}'
       .'async function delAccount(id){if(!confirm("删除账号 "+id+"？（登录态 profile 不删，可再加回）"))return;const msg=document.getElementById("loginMsg");msg.style.display="block";try{const r=await fetch("/accounts?id="+encodeURIComponent(id),{method:"DELETE"});const j=await r.json();msg.textContent=r.ok?("已删除 "+id):("删除失败: "+JSON.stringify(j));if(r.ok)setTimeout(()=>location.reload(),800);}catch(e){msg.textContent="删除失败: "+e;}}'
+      .'async function closeLoginWin(){const msg=document.getElementById("loginMsg");msg.style.display="block";try{const r=await fetch("/login/close",{method:"POST"});const j=await r.json();msg.textContent=r.ok?"登录窗口已关闭":("关闭失败: "+JSON.stringify(j));}catch(e){msg.textContent="关闭失败: "+e;}}'
       .'setInterval(async()=>{try{const r=await fetch("/login/status");const j=await r.json();document.getElementById("sc").textContent=(j&&Object.keys(j).length)?"在线":"离线";}catch(e){document.getElementById("sc").textContent="离线";}},3000);</script>'
       .'</body></html>';
     exit;
@@ -222,6 +225,13 @@ if ($method==='POST' && $path==='/login/open') {
     $r = sidecar_open_login($pid, $aid !== '' ? $aid : null);
     http_response_code($r['ok'] ? 200 : 502);
     echo json_encode($r['ok'] ? ($r['data'] ?: ['ok'=>true]) : ['error'=>['message'=>$r['error'] ?: 'sidecar open failed']], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+if ($method==='POST' && $path==='/login/close') {
+    header("Content-Type: application/json");
+    $r = sidecar_close_login();
+    http_response_code($r['ok'] ? 200 : 502);
+    echo json_encode($r['ok'] ? ($r['data'] ?: ['ok'=>true]) : ['error'=>['message'=>$r['error'] ?: 'sidecar close failed']], JSON_UNESCAPED_UNICODE);
     exit;
 }
 if ($method==='GET' && $path==='/login/status') {
@@ -330,7 +340,8 @@ if ($method==='GET' && ($path==='/' || $path==='/index.php')) {
         'endpoints'=>[
             'GET /health',
             'GET /login (账号池登录页)',
-            'POST /login/open {provider, accountId} (打开有头登录窗口)',
+            'POST /login/open {provider, accountId} (共用登录窗口，打开/切换账号)',
+            'POST /login/close (关闭共用登录窗口)',
             'GET /login/status[?account=] (账号池状态)',
             'GET/POST/DELETE /accounts (账号池增删查, DELETE 带 ?id=)',
             'GET /v1/models',

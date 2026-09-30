@@ -35,6 +35,10 @@ function sidecar_open_login(string $provider, ?string $accountId = null): array 
     return sidecar_request('/login', $post, 65);
 }
 
+function sidecar_close_login(): array {
+    return sidecar_request('/login/close', [], 15);
+}
+
 function sidecar_login_status(?string $accountId = null): array {
     $path = '/login/status' . ($accountId ? '?account=' . rawurlencode($accountId) : '');
     return sidecar_request($path, null, 15);
