@@ -28,6 +28,7 @@ $path = parse_url($uri, PHP_URL_PATH) ?? '/';
 $path = rtrim($path,'/') ?: '/';
 
 $rawBody = file_get_contents('php://input') ?: '';
+if (strncmp($rawBody, "\xEF\xBB\xBF", 3) === 0) $rawBody = substr($rawBody, 3);
 if (strlen($rawBody) > MAX_BODY_BYTES) {
     log_line("Router","$method $path body=".strlen($rawBody)." REJECT_413 ip=".($_SERVER['REMOTE_ADDR']??''));
     header("HTTP/1.1 413 Payload Too Large");
@@ -434,7 +435,7 @@ if ($path==='/v1/chat/completions' || $path==='/chat/completions' || $path==='/v
 
     $isStream = !empty($body['stream']);
     $traceId = substr(base_convert((string)hrtime(true),10,36),-8);
-    log_line("Gateway","chat_start id=$traceId stream=".($isStream?'true':'false')." model=$modelReq provider=$providerId promptChars=".strlen($prompt)." tools=".count($plan['tools']));
+    log_line("Gateway","chat_start id=$traceId ts=".round(microtime(true)*1000)." stream=".($isStream?'true':'false')." model=$modelReq provider=$providerId promptChars=".strlen($prompt)." tools=".count($plan['tools']));
 
     if (!$isStream) {
         $result = webdriver_chat($providerId, $plan['prompt'], false, $traceId);

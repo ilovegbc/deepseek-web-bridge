@@ -339,6 +339,7 @@ async function handleChat(body, res) {
   const traceId = body.traceId || String(Date.now());
   const queueWaitMs = Number.isFinite(body.queueWaitMs) ? body.queueWaitMs : 90000;
   const wantAccount = body.accountId ? String(body.accountId) : null;
+  console.log(`[perf] arrive trace=${traceId} ts=${Date.now()}`);
 
   if (!prompt) {
     return sendJson(res, 400, { error: { message: 'no message content' } });
@@ -415,7 +416,7 @@ async function handleChat(body, res) {
           res.write(JSON.stringify({ type: 'chunk', kind, chunk }) + '\n');
         } catch (_) {}
       };
-      const result = await chat(slot.page, providerId, prompt, { timeoutSec, onChunk });
+      const result = await chat(slot.page, providerId, prompt, { timeoutSec, onChunk, keep: !!body.keep });
       try {
         res.write(JSON.stringify({
           type: 'done', thinking: result.thinking, answer: result.answer,
@@ -424,7 +425,7 @@ async function handleChat(body, res) {
       } catch (_) {}
       res.end();
     } else {
-      const result = await chat(slot.page, providerId, prompt, { timeoutSec });
+      const result = await chat(slot.page, providerId, prompt, { timeoutSec, keep: !!body.keep });
       try { await slot.context.storageState({ path: profilePath(def.id) }); } catch (_) {}
       if (!result.answer && !result.thinking) {
         return sendJson(res, 503, { error: { message: 'gateway busy' }, traceId, accountId: def.id });
@@ -553,6 +554,15 @@ const server = http.createServer(async (req, res) => {
     if (route === '/chat' && req.method === 'POST') {
       const body = await readBody(req);
       return await handleChat(body, res);
+    }
+
+    if (route === '/debug/dump') {
+      for (const s of pool.slots.values()) {
+        if (!s.page || s.page.isClosed()) continue;
+        const data = await bridge.debugDump(s.page).catch(e => ({ error: String(e.message || e) }));
+        return sendJson(res, 200, { accountId: s.id || (s.def && s.def.id) || '', data });
+      }
+      return sendJson(res, 404, { error: { message: 'no page available' } });
     }
 
     if (route === '/providers') {
