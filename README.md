@@ -79,6 +79,24 @@ Invoke-RestMethod -Method Delete -Uri 'http://127.0.0.1:8080/accounts?id=acc2'
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8080/login/close   # 关闭共用登录窗口
 ```
 
+## 桌面版（Windows 安装程序）
+
+不想装 PHP / Node / 浏览器？从 [Releases](../../releases) 下载 `DeepSeekWebBridge-Setup-x.y.z.exe`，一键安装（当前用户、免管理员）：
+
+- **内置完整运行时**：官方 PHP NTS + 官方 Node（构建时从官网下载并校验 SHA256）+ Playwright Chromium，全程离线可用；**不读不写系统环境变量**
+- **应用内页面视图**：网关 `/login` 登录页显示在应用窗口里，**不会弹外部浏览器**
+- **控制面板**：启动 / 停止服务、网关与 sidecar 在线状态、账号在线数；「设置」页可改网关 / sidecar 端口、`API_KEY`、超时、PHP 路径、附加环境变量（改动需重启服务生效）；「日志」页实时输出两侧进程日志
+- 数据目录：`%APPDATA%\DeepSeek Web Bridge\settings.json`
+
+```powershell
+# 从源码构建安装程序（需本机 Node + npm；运行时与浏览器由脚本自动下载）
+cd desktop
+npm install
+npm run dist     # -> desktop/dist/DeepSeekWebBridge-Setup-x.y.z.exe
+```
+
+仓库里有**两份源码**：根目录是开发用的第一份（`manage.ps1` 流程，保持不动）；`desktop/` 是第二份——`npm run dist` 时 `sync-gateway.ps1` 把根目录源码同步进 `desktop/resources/gateway` 作为打包载荷，安装包里的网关永远来自根目录的当前代码。
+
 ## 环境要求（最低）
 
 | 组件 | 最低版本 | 说明 |
@@ -211,6 +229,10 @@ deepseek-web-bridge/
 │   └── profiles/          # 每账号 storageState（已 gitignore）
 ├── scripts/
 │   └── manage.ps1         # 唯一管理脚本：检测/依赖/启动/停止菜单
+├── desktop/               # 桌面版（第二份源码）：Electron 壳 + 打包脚本
+│   ├── src/               # main/preload/renderer（内嵌页面 + 设置 + 日志）
+│   ├── build/             # download-env / sync-gateway / prepare-payload
+│   └── package.json       # electron-builder NSIS 配置
 ├── test.html              # 本地调试页
 ├── LICENSE                # Apache-2.0
 ├── NOTICE

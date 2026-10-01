@@ -1,0 +1,53 @@
+{
+  "name": "deepseek-web-bridge-desktop",
+  "productName": "DeepSeek Web Bridge",
+  "version": "1.0.0",
+  "description": "Desktop wrapper for deepseek-web-bridge: bundled PHP/Node runtime, in-app page view, start/stop controls",
+  "license": "Apache-2.0",
+  "main": "src/main.js",
+  "author": "deepseek-web-bridge contributors",
+  "scripts": {
+    "start": "electron .",
+    "sync": "powershell -NoProfile -ExecutionPolicy Bypass -File build/sync-gateway.ps1",
+    "download-env": "powershell -NoProfile -ExecutionPolicy Bypass -File build/download-env.ps1",
+    "prepare-payload": "powershell -NoProfile -ExecutionPolicy Bypass -File build/prepare-payload.ps1",
+    "build": "npm run sync && npm run prepare-payload",
+    "dist": "npm run build && electron-builder --win nsis"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "io.github.ilovegbc.deepseek-web-bridge",
+    "productName": "DeepSeek Web Bridge",
+    "artifactName": "DeepSeekWebBridge-Setup-${version}.exe",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build/assets"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      { "from": "resources/gateway", "to": "gateway", "filter": ["**/*"] },
+      { "from": "build/env/php", "to": "env/php", "filter": ["**/*"] },
+      { "from": "build/env/node", "to": "env/node", "filter": ["**/*"] }
+    ],
+    "asar": true,
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "DeepSeek Web Bridge",
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}

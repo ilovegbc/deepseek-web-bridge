@@ -28,3 +28,9 @@ config.local.php
 tmp/
 .temp/
 *.tmp
+
+# Desktop app build artifacts (payload is generated from the root source)
+desktop/build/env/
+desktop/resources/gateway/
+desktop/dist/
+desktop/out/

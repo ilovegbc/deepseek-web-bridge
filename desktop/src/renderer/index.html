@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>DeepSeek Web Bridge</title>
+<style>
+  :root {
+    --bg: #111418; --panel: #1a1f26; --panel2: #20262f; --border: #2c3440;
+    --text: #dce3ec; --muted: #8b96a5; --accent: #4c8dff; --ok: #35c26a;
+    --warn: #e2b341; --err: #e25c5c;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.5 "Segoe UI", "Microsoft YaHei", sans-serif; height: 100vh; display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; gap: 14px; padding: 10px 16px;
+           background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .brand { font-weight: 600; font-size: 15px; }
+  .pill { font-size: 12px; padding: 3px 9px; border-radius: 999px;
+          background: var(--panel2); border: 1px solid var(--border); color: var(--muted); }
+  .pill.on { color: #c9f4d8; border-color: #245c39; background: #16301f; }
+  .pill.off { color: #f3c9c9; border-color: #5c2424; background: #301616; }
+  .spacer { flex: 1; }
+  button { font: inherit; padding: 7px 16px; border-radius: 7px; border: 1px solid var(--border);
+           background: var(--panel2); color: var(--text); cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { background: #7a2b2b; border-color: #a13c3c; color: #ffdcdc; }
+  nav { display: flex; gap: 4px; padding: 8px 16px 0; background: var(--panel); border-bottom: 1px solid var(--border); }
+  nav button { border: 1px solid transparent; border-bottom: none; background: transparent;
+               color: var(--muted); padding: 8px 18px; border-radius: 8px 8px 0 0; }
+  nav button.active { background: var(--bg); color: var(--text); border-color: var(--border); }
+  main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .view { display: none; flex: 1; min-height: 0; flex-direction: column; }
+  .view.active { display: flex; }
+  .toolbar { display: flex; gap: 8px; align-items: center; padding: 8px 12px;
+             background: var(--panel); border-bottom: 1px solid var(--border); }
+  .url { flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text);
+         padding: 6px 10px; border-radius: 6px; font-size: 13px; }
+  webview { flex: 1; min-height: 0; background: #fff; }
+  .hint { color: var(--muted); font-size: 12px; padding: 6px 12px; }
+  .settings { padding: 20px 24px; overflow: auto; max-width: 860px; }
+  .settings h3 { margin: 22px 0 10px; font-size: 14px; color: var(--accent);
+                 border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  .settings h3:first-child { margin-top: 0; }
+  .row { display: grid; grid-template-columns: 220px 1fr; gap: 12px; align-items: center; margin-bottom: 12px; }
+  .row label { color: var(--muted); }
+  .row input, .row textarea { background: var(--bg); border: 1px solid var(--border); color: var(--text);
+             padding: 7px 10px; border-radius: 6px; font: inherit; width: 100%; }
+  .row textarea { min-height: 84px; font-family: Consolas, monospace; font-size: 12px; }
+  .row .note { grid-column: 2; color: var(--muted); font-size: 12px; margin-top: -6px; }
+  .actions { margin-top: 18px; display: flex; gap: 10px; align-items: center; }
+  .saved { color: var(--ok); font-size: 13px; }
+  pre#log { margin: 0; flex: 1; overflow: auto; padding: 12px 14px; font-family: Consolas, monospace;
+            font-size: 12px; white-space: pre-wrap; word-break: break-all; background: var(--bg); }
+  .paths { padding: 10px 14px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--border);
+           background: var(--panel); font-family: Consolas, monospace; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">DeepSeek Web Bridge <span id="ver" class="pill"></span></div>
+  <span id="pillGw" class="pill off">网关: 离线</span>
+  <span id="pillSc" class="pill off">Sidecar: 离线</span>
+  <span id="pillAcc" class="pill">账号: -</span>
+  <div class="spacer"></div>
+  <button id="btnStart" class="primary">启动服务</button>
+  <button id="btnStop" class="danger">停止服务</button>
+</header>
+<nav>
+  <button data-view="console" class="active">控制台（应用内页面）</button>
+  <button data-view="settings">设置</button>
+  <button data-view="logs">日志</button>
+</nav>
+<main>
+  <section id="view-console" class="view active">
+    <div class="toolbar">
+      <input id="url" class="url" readonly>
+      <button id="btnReload">刷新</button>
+      <span class="hint">页面在应用内显示，不会打开外部浏览器</span>
+    </div>
+    <webview id="webview" src="about:blank" partition="persist:gw"></webview>
+  </section>
+
+  <section id="view-settings" class="view">
+    <div class="settings">
+      <h3>端口与网络</h3>
+      <div class="row"><label>网关端口 (GATEWAY_PORT)</label><input id="s_gatewayPort" type="number" min="1" max="65535"></div>
+      <div class="row"><label>Sidecar 端口 (SIDECAR_PORT)</label><input id="s_sidecarPort" type="number" min="1" max="65535"></div>
+      <div class="row"><label>监听地址 (BIND_LAN)</label>
+        <select id="s_bindLan" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:6px;font:inherit;">
+          <option value="0">127.0.0.1（仅本机，推荐）</option>
+          <option value="1">0.0.0.0（局域网可访问）</option>
+        </select></div>
+
+      <h3>鉴权与超时</h3>
+      <div class="row"><label>API_KEY</label><input id="s_apiKey" type="text"></div>
+      <div class="row"><label>单次 chat 超时 (秒)</label><input id="s_chatTimeoutSec" type="number" min="10" max="600"></div>
+      <div class="row"><label>PHP 内置服务器 worker 数</label><input id="s_phpWorkers" type="number" min="1" max="64"></div>
+
+      <h3>运行时（封装环境）</h3>
+      <div class="row"><label>PHP 可执行文件（留空=内置）</label><input id="s_phpPath" type="text" placeholder="留空使用安装包内置 PHP"></div>
+      <div class="row"><label>Chrome/Chromium（留空=内置）</label><input id="s_chromePath" type="text" placeholder="留空使用内置 Playwright Chromium"></div>
+      <div class="row"><label>附加环境变量</label><textarea id="s_extraEnv" placeholder="每行一个 KEY=VALUE，例如&#10;POOL_HEADLESS=0"></textarea>
+        <div class="note">环境参数只影响本应用启动的进程，不写入系统环境变量。</div></div>
+
+      <div class="actions">
+        <button id="btnSave" class="primary">保存设置</button>
+        <span id="savedTip" class="saved"></span>
+        <span class="hint">端口 / 运行时改动需点「停止服务」后再「启动服务」生效</span>
+      </div>
+      <div class="paths" id="paths"></div>
+    </div>
+  </section>
+
+  <section id="view-logs" class="view">
+    <pre id="log"></pre>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const FIELDS = ['gatewayPort','sidecarPort','bindLan','apiKey','chatTimeoutSec','phpWorkers','phpPath','chromePath','extraEnv'];
+let settings = {};
+
+function gatewayUrl() {
+  const port = ($('s_gatewayPort').value || settings.gatewayPort || 8080);
+  return 'http://127.0.0.1:' + port;
+}
+function updateUrl() {
+  const u = gatewayUrl();
+  $('url').value = u + '/login';
+  const wv = $('webview');
+  if (wv.getAttribute('src') !== u + '/login' && !wv.isLoading()) {
+    // 端口未变时不动
+  }
+}
+async function loadSettings() {
+  settings = await window.api.getSettings();
+  for (const f of FIELDS) {
+    const el = $('s_' + f);
+    if (el) el.value = settings[f] ?? '';
+  }
+  updateUrl();
+}
+function collect() {
+  const s = {};
+  for (const f of FIELDS) {
+    const el = $('s_' + f);
+    if (!el) continue;
+    let v = el.value;
+    if (['gatewayPort','sidecarPort','chatTimeoutSec','phpWorkers'].includes(f)) v = parseInt(v, 10) || DEFAULTS_NUM[f];
+    if (f === 'bindLan') v = parseInt(v, 10);
+    s[f] = v;
+  }
+  return { ...settings, ...s };
+}
+const DEFAULTS_NUM = { gatewayPort: 8080, sidecarPort: 8090, chatTimeoutSec: 120, phpWorkers: 8 };
+
+function renderState(s) {
+  $('pillGw').textContent = '网关: ' + (s.gateway ? '在线' : '离线');
+  $('pillGw').className = 'pill ' + (s.gateway ? 'on' : 'off');
+  $('pillSc').textContent = 'Sidecar: ' + (s.sidecar ? '在线' : '离线');
+  $('pillSc').className = 'pill ' + (s.sidecar ? 'on' : 'off');
+  const acc = (s.loggedIn != null) ? s.loggedIn + '/' + (s.accounts ?? '-') : '-';
+  $('pillAcc').textContent = '账号在线: ' + acc + (s.busy ? `（忙 ${s.busy}）` : '');
+  $('btnStart').disabled = !!s.running || s.gateway;
+  $('btnStop').disabled = !s.running;
+}
+
+function appendLog(line) {
+  const el = $('log');
+  el.textContent += line + '\n';
+  if (el.textContent.length > 300000) el.textContent = el.textContent.slice(-200000);
+  el.scrollTop = el.scrollHeight;
+}
+
+// tabs
+document.querySelectorAll('nav button').forEach(b => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('nav button').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('.view').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    $('view-' + b.dataset.view).classList.add('active');
+  });
+});
+
+$('btnStart').addEventListener('click', async () => {
+  const r = await window.api.start();
+  if (!r.ok) appendLog('[app] 启动失败: ' + r.error);
+  setTimeout(() => { const wv = $('webview'); wv.src = gatewayUrl() + '/login'; }, 1200);
+});
+$('btnStop').addEventListener('click', () => window.api.stop());
+$('btnReload').addEventListener('click', () => { $('webview').src = gatewayUrl() + '/login'; });
+$('s_gatewayPort').addEventListener('input', updateUrl);
+$('s_sidecarPort') && $('s_sidecarPort').addEventListener('input', () => {});
+$('s_gatewayPort').addEventListener('change', updateUrl);
+
+$('btnSave').addEventListener('click', async () => {
+  const s = collect();
+  await window.api.setSettings(s);
+  settings = s;
+  updateUrl();
+  $('savedTip').textContent = '已保存 ' + new Date().toLocaleTimeString();
+  setTimeout(() => { $('savedTip').textContent = ''; }, 3000);
+});
+
+(async function init() {
+  const info = await window.api.appInfo();
+  $('ver').textContent = 'v' + info.version;
+  await loadSettings();
+  const p = await window.api.paths();
+  $('paths').textContent = [
+    'gateway: ' + p.gateway,
+    'php:     ' + p.php,
+    'node:    ' + p.node,
+    'browser: ' + p.browsers,
+    'data:    ' + p.userData,
+    'mode:    ' + (p.packaged ? 'installed' : 'dev')
+  ].join('\n');
+
+  renderState(await window.api.state());
+  (await window.api.logs()).forEach(appendLog);
+
+  window.api.onState(renderState);
+  window.api.onLog(appendLog);
+
+  // 启动后自动加载页面
+  if ((await window.api.state()).gateway) $('webview').src = gatewayUrl() + '/login';
+  else $('webview').src = gatewayUrl() + '/login';
+})();
+</script>
+</body>
+</html>
