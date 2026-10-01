@@ -3,6 +3,7 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const net = require('net');
 const { spawn } = require('child_process');
 
 // 固定用户数据目录（设置/日志持久化位置）
@@ -147,8 +148,22 @@ function checkRuntime() {
   return problems;
 }
 
+function portInUse(port) {
+  return new Promise((resolve) => {
+    const sock = net.connect({ port, host: '127.0.0.1' }, () => { sock.destroy(); resolve(true); });
+    sock.on('error', () => resolve(false));
+    sock.setTimeout(700, () => { sock.destroy(); resolve(false); });
+  });
+}
+
 async function start() {
   if (state.running) return { ok: false, error: '已经在运行' };
+  if (await portInUse(settings.gatewayPort)) {
+    return { ok: false, error: `网关端口 ${settings.gatewayPort} 已被占用（可能已有服务在运行）。请先停止占用方，或在设置中更换端口。` };
+  }
+  if (await portInUse(settings.sidecarPort)) {
+    return { ok: false, error: `Sidecar 端口 ${settings.sidecarPort} 已被占用。请先停止占用方，或在设置中更换端口。` };
+  }
   const problems = checkRuntime();
   if (problems.length) { problems.forEach(p => log('error', p)); return { ok: false, error: problems.join('；') }; }
 
@@ -214,6 +229,10 @@ async function pollHealth() {
   state.accounts = sc && typeof sc.accounts === 'number' ? sc.accounts : null;
   state.loggedIn = sc && typeof sc.loggedIn === 'number' ? sc.loggedIn : null;
   state.busy = sc && typeof sc.busy === 'number' ? sc.busy : null;
+  if (state.running && !gwProc && !scProc) {
+    state.running = false;
+    log('app', '进程已全部退出');
+  }
   if (JSON.stringify(state) !== before) pushState();
 }
 function startHealth() {
@@ -243,6 +262,14 @@ function createWindow() {
   });
   win.setMenuBarVisibility(false);
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+
+  // 渲染层控制台透传到日志（便于排查界面问题）
+  win.webContents.on('console-message', (_e, level, message) => {
+    if (level >= 3) {
+      log('ui', '[error] ' + message);
+      console.log('[ui:error] ' + message);
+    }
+  });
 
   // 内嵌页面里不允许弹出外部浏览器
   win.webContents.on('did-attach-webview', (_e, wv) => {

@@ -107,14 +107,14 @@ function webdriver_chat(string $providerId, string $prompt, bool $stream, string
     ]);
 
 if ($stream) {
-        // WRITEFUNCTION must return byte count
+        // WRITEFUNCTION 的数据块是任意 TCP 分片（可能半行或多行），必须按行缓冲再解析
         $final = ['thinking' => '', 'answer' => ''];
-        $responseFn = function ($ch, $data) use ($onChunk, &$final) {
-            $len = strlen($data);
-            $line = trim($data);
-            if ($line === '') return $len;
+        $buf = '';
+        $processLine = function (string $line) use ($onChunk, &$final) {
+            $line = trim($line);
+            if ($line === '') return;
             $obj = json_decode($line, true);
-            if (!is_array($obj)) return $len;
+            if (!is_array($obj)) return;
             $t = $obj['type'] ?? '';
             if ($t === 'chunk' && $onChunk) {
                 $onChunk($obj['kind'] ?? 'answer', $obj['chunk'] ?? '');
@@ -126,10 +126,18 @@ if ($stream) {
             } elseif ($t === 'error') {
                 $final['error'] = (string)($obj['message'] ?? 'stream error');
             }
-            return $len;
+        };
+        $responseFn = function ($ch, $data) use (&$buf, $processLine) {
+            $buf .= $data;
+            while (($pos = strpos($buf, "\n")) !== false) {
+                $processLine(substr($buf, 0, $pos));
+                $buf = substr($buf, $pos + 1);
+            }
+            return strlen($data);
         };
         curl_setopt($ch, CURLOPT_WRITEFUNCTION, $responseFn);
         $ok = curl_exec($ch);
+        if ($buf !== '') $processLine($buf);
         $err = curl_error($ch);
         $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
         if ($ok === false) {

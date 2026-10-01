@@ -5,115 +5,276 @@
 <title>DeepSeek Web Bridge</title>
 <style>
   :root {
-    --bg: #111418; --panel: #1a1f26; --panel2: #20262f; --border: #2c3440;
-    --text: #dce3ec; --muted: #8b96a5; --accent: #4c8dff; --ok: #35c26a;
-    --warn: #e2b341; --err: #e25c5c;
+    --bg: #0e1116;
+    --side: #131820;
+    --card: #171d26;
+    --card2: #12171f;
+    --border: #232b36;
+    --border2: #2a3341;
+    --text: #e7ecf3;
+    --muted: #8b96a6;
+    --dim: #5d6776;
+    --accent: #4d8dff;
+    --accent2: #6a63ff;
+    --ok: #3ecf8e;
+    --warn: #f5b74e;
+    --err: #ff6b6b;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text);
-         font: 14px/1.5 "Segoe UI", "Microsoft YaHei", sans-serif; height: 100vh; display: flex; flex-direction: column; }
-  header { display: flex; align-items: center; gap: 14px; padding: 10px 16px;
-           background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
-  .brand { font-weight: 600; font-size: 15px; }
-  .pill { font-size: 12px; padding: 3px 9px; border-radius: 999px;
-          background: var(--panel2); border: 1px solid var(--border); color: var(--muted); }
-  .pill.on { color: #c9f4d8; border-color: #245c39; background: #16301f; }
-  .pill.off { color: #f3c9c9; border-color: #5c2424; background: #301616; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text); display: flex;
+    font: 14px/1.55 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased; overflow: hidden;
+  }
+  button { font: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+  button:disabled { cursor: default; }
+
+  /* ---------- 侧栏 ---------- */
+  aside {
+    width: 236px; flex: none; background: var(--side); border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; padding: 16px 14px 12px;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 4px 6px 16px; }
+  .brand .name { font-size: 15px; font-weight: 650; letter-spacing: .2px; line-height: 1.2; }
+  .brand .sub { font-size: 11px; color: var(--muted); letter-spacing: .6px; }
+
+  nav { display: flex; flex-direction: column; gap: 4px; }
+  .nav {
+    display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 9px;
+    color: var(--muted); font-size: 13.5px; text-align: left; transition: background .12s, color .12s;
+  }
+  .nav svg { width: 16px; height: 16px; flex: none; opacity: .85; }
+  .nav:hover { background: rgba(255,255,255,.045); color: var(--text); }
+  .nav.active { background: linear-gradient(135deg, rgba(77,141,255,.16), rgba(106,99,255,.12)); color: #fff; }
+  .nav.active svg { color: var(--accent); opacity: 1; }
+
   .spacer { flex: 1; }
-  button { font: inherit; padding: 7px 16px; border-radius: 7px; border: 1px solid var(--border);
-           background: var(--panel2); color: var(--text); cursor: pointer; }
-  button:hover { border-color: var(--accent); }
-  button:disabled { opacity: .45; cursor: default; }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  button.danger { background: #7a2b2b; border-color: #a13c3c; color: #ffdcdc; }
-  nav { display: flex; gap: 4px; padding: 8px 16px 0; background: var(--panel); border-bottom: 1px solid var(--border); }
-  nav button { border: 1px solid transparent; border-bottom: none; background: transparent;
-               color: var(--muted); padding: 8px 18px; border-radius: 8px 8px 0 0; }
-  nav button.active { background: var(--bg); color: var(--text); border-color: var(--border); }
-  main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+  .status {
+    background: var(--card2); border: 1px solid var(--border); border-radius: 12px;
+    padding: 12px; margin-top: 12px;
+  }
+  .status .cap { font-size: 11px; color: var(--dim); letter-spacing: .8px; margin-bottom: 8px; }
+  .srow { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 4px 0; color: var(--muted); }
+  .srow b { color: var(--text); font-weight: 500; }
+  .srow .val { margin-left: auto; font-size: 12.5px; color: var(--muted); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #3a4351; flex: none; }
+  .dot.on { background: var(--ok); box-shadow: 0 0 0 3px rgba(62,207,142,.15); animation: pulse 2.2s infinite; }
+  .dot.warn { background: var(--warn); box-shadow: 0 0 0 3px rgba(245,183,78,.14); }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
+
+  .extnote {
+    display: none; margin-top: 8px; font-size: 11.5px; line-height: 1.5; color: var(--warn);
+    background: rgba(245,183,78,.08); border: 1px solid rgba(245,183,78,.22);
+    border-radius: 8px; padding: 6px 8px;
+  }
+  .extnote.show { display: block; }
+
+  .acts { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+  .btn {
+    padding: 9px 12px; border-radius: 9px; font-size: 13.5px; font-weight: 600;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    transition: filter .12s, border-color .12s, opacity .12s;
+  }
+  .btn.primary { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; box-shadow: 0 4px 14px rgba(77,141,255,.25); }
+  .btn.primary:hover { filter: brightness(1.08); }
+  .btn.ghost { background: transparent; border: 1px solid var(--border2); color: #cfd8e4; }
+  .btn.ghost:hover { border-color: var(--accent); color: #fff; }
+  .btn:disabled { opacity: .38; box-shadow: none; }
+  .btn.primary:disabled:hover { filter: none; }
+  .btn.ghost:disabled:hover { border-color: var(--border2); color: #cfd8e4; }
+  .runstate { text-align: center; font-size: 11.5px; color: var(--dim); margin-top: 2px; min-height: 16px; }
+  .ver { text-align: center; font-size: 11px; color: var(--dim); padding-top: 10px; }
+
+  /* ---------- 主区 ---------- */
+  main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   .view { display: none; flex: 1; min-height: 0; flex-direction: column; }
   .view.active { display: flex; }
-  .toolbar { display: flex; gap: 8px; align-items: center; padding: 8px 12px;
-             background: var(--panel); border-bottom: 1px solid var(--border); }
-  .url { flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text);
-         padding: 6px 10px; border-radius: 6px; font-size: 13px; }
-  webview { flex: 1; min-height: 0; background: #fff; }
-  .hint { color: var(--muted); font-size: 12px; padding: 6px 12px; }
-  .settings { padding: 20px 24px; overflow: auto; max-width: 860px; }
-  .settings h3 { margin: 22px 0 10px; font-size: 14px; color: var(--accent);
-                 border-bottom: 1px solid var(--border); padding-bottom: 6px; }
-  .settings h3:first-child { margin-top: 0; }
-  .row { display: grid; grid-template-columns: 220px 1fr; gap: 12px; align-items: center; margin-bottom: 12px; }
-  .row label { color: var(--muted); }
-  .row input, .row textarea { background: var(--bg); border: 1px solid var(--border); color: var(--text);
-             padding: 7px 10px; border-radius: 6px; font: inherit; width: 100%; }
-  .row textarea { min-height: 84px; font-family: Consolas, monospace; font-size: 12px; }
-  .row .note { grid-column: 2; color: var(--muted); font-size: 12px; margin-top: -6px; }
-  .actions { margin-top: 18px; display: flex; gap: 10px; align-items: center; }
-  .saved { color: var(--ok); font-size: 13px; }
-  pre#log { margin: 0; flex: 1; overflow: auto; padding: 12px 14px; font-family: Consolas, monospace;
-            font-size: 12px; white-space: pre-wrap; word-break: break-all; background: var(--bg); }
-  .paths { padding: 10px 14px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--border);
-           background: var(--panel); font-family: Consolas, monospace; }
+
+  .vhead {
+    height: 52px; flex: none; display: flex; align-items: center; gap: 12px;
+    padding: 0 18px; border-bottom: 1px solid var(--border); background: rgba(19,24,32,.6);
+  }
+  .vhead .t { font-size: 14.5px; font-weight: 600; }
+  .vhead .d { font-size: 12px; color: var(--dim); }
+  .vhead .sp { flex: 1; }
+  .mini {
+    padding: 6px 13px; border-radius: 8px; font-size: 12.5px; font-weight: 500;
+    background: var(--card); border: 1px solid var(--border2); color: #cfd8e4;
+    transition: border-color .12s, color .12s;
+  }
+  .mini:hover { border-color: var(--accent); color: #fff; }
+  .mini.solid { background: linear-gradient(135deg, var(--accent), var(--accent2)); border: none; color: #fff; }
+  .mini.solid:hover { filter: brightness(1.08); }
+  .saved { font-size: 12px; color: var(--ok); opacity: 0; transition: opacity .2s; }
+  .saved.show { opacity: 1; }
+
+  /* 控制台 */
+  #webview { flex: 1; min-height: 0; background: #fff; }
+
+  /* 设置 */
+  .scroll { flex: 1; min-height: 0; overflow: auto; padding: 20px 22px 28px; }
+  .scroll::-webkit-scrollbar, #log::-webkit-scrollbar { width: 10px; }
+  .scroll::-webkit-scrollbar-thumb, #log::-webkit-scrollbar-thumb { background: #29313d; border-radius: 5px; border: 2px solid var(--bg); }
+  .wrap { max-width: 820px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px 18px 14px; margin-bottom: 16px;
+  }
+  .card h3 { margin: 0 0 4px; font-size: 13.5px; font-weight: 600; }
+  .card .hint { margin: 0 0 14px; font-size: 12px; color: var(--muted); }
+  .row { display: grid; grid-template-columns: 230px 1fr; gap: 14px; align-items: center; margin-bottom: 12px; }
+  .row:last-child { margin-bottom: 2px; }
+  .row label { color: var(--muted); font-size: 13px; }
+  .row input, .row select, .row textarea {
+    width: 100%; background: #0e1218; border: 1px solid var(--border2); color: var(--text);
+    padding: 8px 11px; border-radius: 8px; font: inherit; font-size: 13px;
+    transition: border-color .12s, box-shadow .12s;
+  }
+  .row input:focus, .row select:focus, .row textarea:focus {
+    outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(77,141,255,.16);
+  }
+  .row textarea { min-height: 92px; font-family: Consolas, monospace; font-size: 12px; resize: vertical; }
+  .row select { appearance: none; background-image: linear-gradient(45deg,transparent 50%,#7d8798 50%),linear-gradient(135deg,#7d8798 50%,transparent 50%);
+    background-position: calc(100% - 16px) 55%, calc(100% - 11px) 55%; background-size: 5px 5px; background-repeat: no-repeat; }
+  .paths {
+    background: var(--card2); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 13px; font-family: Consolas, monospace; font-size: 11.5px;
+    color: var(--dim); white-space: pre-wrap; word-break: break-all; line-height: 1.7;
+  }
+
+  /* 日志 */
+  #log {
+    flex: 1; min-height: 0; overflow: auto; margin: 0; padding: 14px 18px;
+    font-family: Consolas, "Courier New", monospace; font-size: 12px; line-height: 1.65;
+    white-space: pre-wrap; word-break: break-all; color: #aab6c6; background: var(--bg);
+  }
 </style>
 </head>
 <body>
-<header>
-  <div class="brand">DeepSeek Web Bridge <span id="ver" class="pill"></span></div>
-  <span id="pillGw" class="pill off">网关: 离线</span>
-  <span id="pillSc" class="pill off">Sidecar: 离线</span>
-  <span id="pillAcc" class="pill">账号: -</span>
+
+<aside>
+  <div class="brand">
+    <svg width="30" height="30" viewBox="0 0 256 256" aria-hidden="true">
+      <defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#5494ff"/><stop offset="1" stop-color="#142a6c"/>
+      </linearGradient></defs>
+      <rect x="4" y="4" width="248" height="248" rx="56" fill="url(#lg)"/>
+      <path d="M77 154 h31 l-25 39 z" fill="#fff"/>
+      <rect x="51" y="56" width="154" height="108" rx="28" fill="#fff"/>
+      <circle cx="87" cy="110" r="13" fill="#2b6be5"/>
+      <circle cx="128" cy="110" r="13" fill="#2b6be5"/>
+      <circle cx="169" cy="110" r="13" fill="#2b6be5"/>
+    </svg>
+    <div>
+      <div class="name">DeepSeek Web Bridge</div>
+      <div class="sub">本地 OpenAI 网关</div>
+    </div>
+  </div>
+
+  <nav>
+    <button class="nav active" data-view="console">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+        <rect x="1.6" y="2.6" width="12.8" height="10.8" rx="2"/><path d="M1.6 5.6h12.8M4 4.1h.01M6 4.1h.01"/>
+      </svg>控制台
+    </button>
+    <button class="nav" data-view="settings">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+        <path d="M2 4.5h12M2 8h12M2 11.5h12"/>
+        <circle cx="5.5" cy="4.5" r="1.7" fill="var(--side)"/>
+        <circle cx="10.5" cy="8" r="1.7" fill="var(--side)"/>
+        <circle cx="6.5" cy="11.5" r="1.7" fill="var(--side)"/>
+      </svg>设置
+    </button>
+    <button class="nav" data-view="logs">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="1.6" y="2.6" width="12.8" height="10.8" rx="2"/><path d="M4.6 6.2 7 8.5l-2.4 2.3M8.6 11h3"/>
+      </svg>日志
+    </button>
+  </nav>
+
   <div class="spacer"></div>
-  <button id="btnStart" class="primary">启动服务</button>
-  <button id="btnStop" class="danger">停止服务</button>
-</header>
-<nav>
-  <button data-view="console" class="active">控制台（应用内页面）</button>
-  <button data-view="settings">设置</button>
-  <button data-view="logs">日志</button>
-</nav>
+
+  <div class="status">
+    <div class="cap">服务状态</div>
+    <div class="srow"><span class="dot" id="dotGw"></span><b>网关</b><span class="val" id="txtGw">检测中…</span></div>
+    <div class="srow"><span class="dot" id="dotSc"></span><b>Sidecar</b><span class="val" id="txtSc">检测中…</span></div>
+    <div class="srow"><span class="dot" id="dotAcc" style="visibility:hidden"></span><b>在线账号</b><span class="val" id="txtAcc">—</span></div>
+    <div class="extnote" id="extNote">检测到端口上已有服务运行。点「启动服务」会提示端口被占用，可先停止已有服务或改端口。</div>
+    <div class="acts">
+      <button id="btnStart" class="btn primary">启动服务</button>
+      <button id="btnStop" class="btn ghost">停止服务</button>
+    </div>
+    <div class="runstate" id="runState">未启动</div>
+  </div>
+  <div class="ver" id="ver">v…</div>
+</aside>
+
 <main>
+  <!-- 控制台 -->
   <section id="view-console" class="view active">
-    <div class="toolbar">
-      <input id="url" class="url" readonly>
-      <button id="btnReload">刷新</button>
-      <span class="hint">页面在应用内显示，不会打开外部浏览器</span>
+    <div class="vhead">
+      <span class="t">控制台</span><span class="d">DeepSeek 网页会话（应用内显示）</span>
+      <span class="sp"></span>
+      <button id="btnReload" class="mini">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" style="vertical-align:-1px">
+          <path d="M13.5 8a5.5 5.5 0 1 1-1.7-4"/><path d="M13.6 2.2v3.2h-3.2"/>
+        </svg>
+        刷新页面
+      </button>
     </div>
     <webview id="webview" src="about:blank" partition="persist:gw"></webview>
   </section>
 
+  <!-- 设置 -->
   <section id="view-settings" class="view">
-    <div class="settings">
-      <h3>端口与网络</h3>
-      <div class="row"><label>网关端口 (GATEWAY_PORT)</label><input id="s_gatewayPort" type="number" min="1" max="65535"></div>
-      <div class="row"><label>Sidecar 端口 (SIDECAR_PORT)</label><input id="s_sidecarPort" type="number" min="1" max="65535"></div>
-      <div class="row"><label>监听地址 (BIND_LAN)</label>
-        <select id="s_bindLan" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:6px;font:inherit;">
-          <option value="0">127.0.0.1（仅本机，推荐）</option>
-          <option value="1">0.0.0.0（局域网可访问）</option>
-        </select></div>
-
-      <h3>鉴权与超时</h3>
-      <div class="row"><label>API_KEY</label><input id="s_apiKey" type="text"></div>
-      <div class="row"><label>单次 chat 超时 (秒)</label><input id="s_chatTimeoutSec" type="number" min="10" max="600"></div>
-      <div class="row"><label>PHP 内置服务器 worker 数</label><input id="s_phpWorkers" type="number" min="1" max="64"></div>
-
-      <h3>运行时（封装环境）</h3>
-      <div class="row"><label>PHP 可执行文件（留空=内置）</label><input id="s_phpPath" type="text" placeholder="留空使用安装包内置 PHP"></div>
-      <div class="row"><label>Chrome/Chromium（留空=内置）</label><input id="s_chromePath" type="text" placeholder="留空使用内置 Playwright Chromium"></div>
-      <div class="row"><label>附加环境变量</label><textarea id="s_extraEnv" placeholder="每行一个 KEY=VALUE，例如&#10;POOL_HEADLESS=0"></textarea>
-        <div class="note">环境参数只影响本应用启动的进程，不写入系统环境变量。</div></div>
-
-      <div class="actions">
-        <button id="btnSave" class="primary">保存设置</button>
-        <span id="savedTip" class="saved"></span>
-        <span class="hint">端口 / 运行时改动需点「停止服务」后再「启动服务」生效</span>
-      </div>
-      <div class="paths" id="paths"></div>
+    <div class="vhead">
+      <span class="t">设置</span><span class="d">端口与运行参数（改后需重启服务）</span>
+      <span class="sp"></span>
+      <span class="saved" id="savedTip"></span>
+      <button id="btnSave" class="mini solid">保存设置</button>
     </div>
+    <div class="scroll"><div class="wrap">
+      <div class="card">
+        <h3>端口与网络</h3>
+        <p class="hint">网关供 OpenAI 客户端调用；sidecar 由网关内部调用，一般无需改动。</p>
+        <div class="row"><label>网关端口 GATEWAY_PORT</label><input id="s_gatewayPort" type="number" min="1" max="65535"></div>
+        <div class="row"><label>Sidecar 端口 SIDECAR_PORT</label><input id="s_sidecarPort" type="number" min="1" max="65535"></div>
+        <div class="row"><label>监听地址 BIND_LAN</label>
+          <select id="s_bindLan">
+            <option value="0">127.0.0.1 · 仅本机（推荐）</option>
+            <option value="1">0.0.0.0 · 局域网可访问</option>
+          </select></div>
+      </div>
+
+      <div class="card">
+        <h3>鉴权与超时</h3>
+        <p class="hint">API_KEY 用于客户端 Bearer 鉴权，上线前务必修改默认值。</p>
+        <div class="row"><label>API_KEY</label><input id="s_apiKey" type="text" spellcheck="false"></div>
+        <div class="row"><label>单次 chat 超时（秒）</label><input id="s_chatTimeoutSec" type="number" min="10" max="600"></div>
+        <div class="row"><label>PHP worker 数</label><input id="s_phpWorkers" type="number" min="1" max="64"></div>
+      </div>
+
+      <div class="card">
+        <h3>运行时（封装环境）</h3>
+        <p class="hint">留空即使用安装包内置的 PHP 与 Playwright Chromium；环境参数只影响本应用启动的子进程，不写入系统。</p>
+        <div class="row"><label>PHP 可执行文件</label><input id="s_phpPath" type="text" placeholder="留空 = 内置 PHP" spellcheck="false"></div>
+        <div class="row"><label>Chrome / Chromium</label><input id="s_chromePath" type="text" placeholder="留空 = 内置 Chromium" spellcheck="false"></div>
+        <div class="row"><label>附加环境变量</label><textarea id="s_extraEnv" placeholder="每行一个 KEY=VALUE，例如&#10;POOL_HEADLESS=0"></textarea></div>
+      </div>
+
+      <div class="paths" id="paths"></div>
+    </div></div>
   </section>
 
+  <!-- 日志 -->
   <section id="view-logs" class="view">
+    <div class="vhead">
+      <span class="t">日志</span><span class="d">网关 / sidecar / 界面实时输出</span>
+      <span class="sp"></span>
+      <button id="btnClearLog" class="mini">清空</button>
+    </div>
     <pre id="log"></pre>
   </section>
 </main>
@@ -121,51 +282,69 @@
 <script>
 const $ = (id) => document.getElementById(id);
 const FIELDS = ['gatewayPort','sidecarPort','bindLan','apiKey','chatTimeoutSec','phpWorkers','phpPath','chromePath','extraEnv'];
+const NUMS = { gatewayPort: 8080, sidecarPort: 8090, chatTimeoutSec: 120, phpWorkers: 8 };
 let settings = {};
+let starting = false;
+let pageLoaded = false;
 
 function gatewayUrl() {
-  const port = ($('s_gatewayPort').value || settings.gatewayPort || 8080);
+  const port = parseInt($('s_gatewayPort').value, 10) || settings.gatewayPort || 8080;
   return 'http://127.0.0.1:' + port;
 }
-function updateUrl() {
-  const u = gatewayUrl();
-  $('url').value = u + '/login';
-  const wv = $('webview');
-  if (wv.getAttribute('src') !== u + '/login' && !wv.isLoading()) {
-    // 端口未变时不动
-  }
-}
+
 async function loadSettings() {
   settings = await window.api.getSettings();
   for (const f of FIELDS) {
     const el = $('s_' + f);
     if (el) el.value = settings[f] ?? '';
   }
-  updateUrl();
 }
+
 function collect() {
-  const s = {};
+  const s = { ...settings };
   for (const f of FIELDS) {
     const el = $('s_' + f);
     if (!el) continue;
     let v = el.value;
-    if (['gatewayPort','sidecarPort','chatTimeoutSec','phpWorkers'].includes(f)) v = parseInt(v, 10) || DEFAULTS_NUM[f];
+    if (f in NUMS) v = parseInt(v, 10) || NUMS[f];
     if (f === 'bindLan') v = parseInt(v, 10);
     s[f] = v;
   }
-  return { ...settings, ...s };
+  return s;
 }
-const DEFAULTS_NUM = { gatewayPort: 8080, sidecarPort: 8090, chatTimeoutSec: 120, phpWorkers: 8 };
+
+function setDot(el, cls) {
+  el.className = 'dot' + (cls ? ' ' + cls : '');
+}
 
 function renderState(s) {
-  $('pillGw').textContent = '网关: ' + (s.gateway ? '在线' : '离线');
-  $('pillGw').className = 'pill ' + (s.gateway ? 'on' : 'off');
-  $('pillSc').textContent = 'Sidecar: ' + (s.sidecar ? '在线' : '离线');
-  $('pillSc').className = 'pill ' + (s.sidecar ? 'on' : 'off');
-  const acc = (s.loggedIn != null) ? s.loggedIn + '/' + (s.accounts ?? '-') : '-';
-  $('pillAcc').textContent = '账号在线: ' + acc + (s.busy ? `（忙 ${s.busy}）` : '');
-  $('btnStart').disabled = !!s.running || s.gateway;
-  $('btnStop').disabled = !s.running;
+  const running = !!s.running;
+  const gwOn = !!s.gateway;
+  const scOn = !!s.sidecar;
+
+  setDot($('dotGw'), gwOn ? (running ? 'on' : 'warn') : '');
+  setDot($('dotSc'), scOn ? (running ? 'on' : 'warn') : '');
+  $('txtGw').textContent = gwOn ? (running ? '在线' : '外部占用') : '离线';
+  $('txtSc').textContent = scOn ? (running ? '在线' : '外部占用') : '离线';
+  $('txtAcc').textContent = (s.loggedIn != null)
+    ? s.loggedIn + ' / ' + (s.accounts ?? '—') + (s.busy ? '（忙 ' + s.busy + '）' : '')
+    : '—';
+  $('dotAcc').style.visibility = scOn ? 'visible' : 'hidden';
+  setDot($('dotAcc'), (s.loggedIn > 0) ? 'on' : '');
+
+  $('extNote').classList.toggle('show', !running && (gwOn || scOn));
+
+  $('btnStart').disabled = running || starting;
+  $('btnStop').disabled = !running;
+  $('runState').textContent = starting ? '启动中…' : (running ? '运行中' : '未启动');
+
+  // 网关健康后才加载内嵌页面，避免启动前的连接失败错误页
+  if (gwOn && !pageLoaded) {
+    pageLoaded = true;
+    $('webview').src = gatewayUrl() + '/login';
+  } else if (!gwOn && pageLoaded) {
+    pageLoaded = false;
+  }
 }
 
 function appendLog(line) {
@@ -175,59 +354,68 @@ function appendLog(line) {
   el.scrollTop = el.scrollHeight;
 }
 
-// tabs
-document.querySelectorAll('nav button').forEach(b => {
+/* ---- 视图切换 ---- */
+document.querySelectorAll('nav .nav').forEach(b => {
   b.addEventListener('click', () => {
-    document.querySelectorAll('nav button').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('nav .nav').forEach(x => x.classList.remove('active'));
     document.querySelectorAll('.view').forEach(x => x.classList.remove('active'));
     b.classList.add('active');
     $('view-' + b.dataset.view).classList.add('active');
   });
 });
 
+/* ---- 启停 ---- */
 $('btnStart').addEventListener('click', async () => {
+  starting = true;
+  renderState(await window.api.state());
   const r = await window.api.start();
-  if (!r.ok) appendLog('[app] 启动失败: ' + r.error);
-  setTimeout(() => { const wv = $('webview'); wv.src = gatewayUrl() + '/login'; }, 1200);
+  starting = false;
+  if (!r.ok) {
+    appendLog('[app] 启动失败: ' + r.error);
+    alert(r.error);
+  }
+  renderState(await window.api.state());
 });
-$('btnStop').addEventListener('click', () => window.api.stop());
-$('btnReload').addEventListener('click', () => { $('webview').src = gatewayUrl() + '/login'; });
-$('s_gatewayPort').addEventListener('input', updateUrl);
-$('s_sidecarPort') && $('s_sidecarPort').addEventListener('input', () => {});
-$('s_gatewayPort').addEventListener('change', updateUrl);
 
+$('btnStop').addEventListener('click', async () => {
+  await window.api.stop();
+  renderState(await window.api.state());
+});
+
+$('btnReload').addEventListener('click', () => { $('webview').src = gatewayUrl() + '/login'; });
+$('btnClearLog').addEventListener('click', () => { $('log').textContent = ''; });
+
+/* ---- 设置 ---- */
 $('btnSave').addEventListener('click', async () => {
   const s = collect();
   await window.api.setSettings(s);
   settings = s;
-  updateUrl();
-  $('savedTip').textContent = '已保存 ' + new Date().toLocaleTimeString();
-  setTimeout(() => { $('savedTip').textContent = ''; }, 3000);
+  $('savedTip').textContent = '已保存';
+  $('savedTip').classList.add('show');
+  setTimeout(() => $('savedTip').classList.remove('show'), 2500);
 });
 
+/* ---- 初始化 ---- */
 (async function init() {
   const info = await window.api.appInfo();
   $('ver').textContent = 'v' + info.version;
+
   await loadSettings();
+
   const p = await window.api.paths();
   $('paths').textContent = [
-    'gateway: ' + p.gateway,
-    'php:     ' + p.php,
-    'node:    ' + p.node,
-    'browser: ' + p.browsers,
-    'data:    ' + p.userData,
-    'mode:    ' + (p.packaged ? 'installed' : 'dev')
+    'gateway   ' + p.gateway,
+    'php       ' + p.php,
+    'node      ' + p.node,
+    'browser   ' + p.browsers,
+    'data      ' + p.userData,
+    'mode      ' + (p.packaged ? 'installed' : 'dev')
   ].join('\n');
 
   renderState(await window.api.state());
   (await window.api.logs()).forEach(appendLog);
-
   window.api.onState(renderState);
   window.api.onLog(appendLog);
-
-  // 启动后自动加载页面
-  if ((await window.api.state()).gateway) $('webview').src = gatewayUrl() + '/login';
-  else $('webview').src = gatewayUrl() + '/login';
 })();
 </script>
 </body>

@@ -512,6 +512,7 @@ if ($path==='/v1/chat/completions' || $path==='/chat/completions' || $path==='/v
     $id = 'chatcmpl-'.time();
     $created = time();
     $answerBuf = '';
+    $emitted = '';
     $thinkingBuf = '';
     $toolBuf = '';
     $toolMode = $plan['enabled'] ? ToolCalling::streamMode('', !empty($plan['required'])) : 'CONTENT';
@@ -523,7 +524,7 @@ if ($path==='/v1/chat/completions' || $path==='/chat/completions' || $path==='/v
 
     $emit(sse_chunk($id, $created, 'answer', '', true, $modelReq));
 
-    $onChunk = function(string $kind, string $chunk) use (&$answerBuf, &$thinkingBuf, &$toolMode, &$toolBuf, &$plan, $emit, $id, $created, $modelReq) {
+    $onChunk = function(string $kind, string $chunk) use (&$answerBuf, &$emitted, &$thinkingBuf, &$toolMode, &$toolBuf, &$plan, $emit, $id, $created, $modelReq) {
         if ($kind === 'thinking') {
             $thinkingBuf .= $chunk;
             $emit(sse_chunk($id, $created, 'thinking', $chunk, false, $modelReq));
@@ -539,6 +540,7 @@ if ($path==='/v1/chat/completions' || $path==='/chat/completions' || $path==='/v
             $toolMode = ToolCalling::streamMode($toolBuf, !empty($plan['required']));
             if ($toolMode === 'CONTENT') {
                 $answerBuf .= $toolBuf;
+                $emitted .= $toolBuf;
                 $emit(sse_chunk($id, $created, 'answer', $toolBuf, false, $modelReq));
                 $toolBuf = '';
             }
@@ -548,7 +550,18 @@ if ($path==='/v1/chat/completions' || $path==='/chat/completions' || $path==='/v
             $answerBuf .= $chunk;
             return;
         }
+        // 中途出现工具调用标记（DSML / tool_calls）或可能被截断的标记开头：转入 WAIT 观察，避免明文发给客户端
+        if (stripos($chunk, 'DSML') !== false
+            || preg_match('/<(?:｜|\|)[^>]*\b(?:invoke|calls|parameters)\b/i', $chunk)
+            || preg_match('/<\/?(?:tool_calls|tool_call)/', $chunk)
+            || preg_match('/<\s*[｜|][^>]{0,48}$/', $chunk)
+            || preg_match('/<\s*$/', $chunk)) {
+            $toolMode = 'WAIT';
+            $toolBuf = $chunk;
+            return;
+        }
         $answerBuf .= $chunk;
+        $emitted .= $chunk;
         $emit(sse_chunk($id, $created, 'answer', $chunk, false, $modelReq));
     };
 
@@ -579,8 +592,13 @@ if ($path==='/v1/chat/completions' || $path==='/chat/completions' || $path==='/v
         $emit(sse_tool_chunk($id, $created, $toolOut['calls'], false, $modelReq));
         $finish = 'tool_calls';
     } else {
-        if ($plan['enabled'] && ($toolMode === 'WAIT' || $toolMode === 'TOOL') && $finalAnswer !== '' && $answerBuf === '') {
-            $emit(sse_chunk($id, $created, 'answer', $finalAnswer, false, $modelReq));
+        if ($plan['enabled'] && ($toolMode === 'WAIT' || $toolMode === 'TOOL') && $finalAnswer !== '') {
+            $rest = $toolOut['content'];
+            if ($emitted === '') {
+                if ($rest !== '') $emit(sse_chunk($id, $created, 'answer', $rest, false, $modelReq));
+            } elseif ($rest !== '' && str_starts_with($rest, $emitted)) {
+                $emit(sse_chunk($id, $created, 'answer', substr($rest, strlen($emitted)), false, $modelReq));
+            }
         }
         $finish = 'stop';
     }

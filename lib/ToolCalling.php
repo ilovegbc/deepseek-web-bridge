@@ -62,7 +62,8 @@ class ToolCalling {
         $must = $required ? '你必须调用工具，不能直接回答。' : '只有确实需要工具时才调用；不需要时直接正常回答。';
         $par  = $parallel ? '可以在数组中同时返回多个互不依赖的工具调用。' : '每次最多返回一个工具调用。';
         $protocol = "\n". $must . $par . "\n可用工具定义：\n". json_encode($arr, JSON_UNESCAPED_UNICODE|JSON_PRETTY_PRINT)
-            . "\n\n调用工具时，最终回答必须且只能是下面的格式，不要使用 Markdown 代码块，不要添加解释：\n<tool_calls>[{\"name\":\"工具名\",\"arguments\":{}}]</tool_calls>\narguments 必须是符合该工具 parameters 的 JSON 对象。工具结果会在下一轮以“工具返回”提供。\n";
+            . "\n\n调用工具时，最终回答必须且只能是下面的格式，不要使用 Markdown 代码块，不要添加解释：\n<tool_calls>[{\"name\":\"工具名\",\"arguments\":{}}]</tool_calls>\narguments 必须是符合该工具 parameters 的 JSON 对象。工具结果会在下一轮以“工具返回”提供。\n"
+            . "如果你更习惯原生的 DSML 调用格式（<｜｜DSML｜｜ calls><｜｜DSML｜｜ invoke name=\"工具名\"><｜｜DSML｜｜ parameter name=\"参数名\" string=\"true\">值</｜｜DSML｜｜ parameter></｜｜DSML｜｜ invoke>...</｜｜DSML｜｜ calls>），也可以直接使用，网关同样能解析，二选一即可。\n";
         $prompt = $basePrompt . "\n\n[系统工具调用协议]\n" . $protocol;
         return ['prompt'=>$prompt,'tools'=>$map,'enabled'=>true,'required'=>$required,'parallel'=>$parallel,'error'=>null];
     }
@@ -70,6 +71,17 @@ class ToolCalling {
     public static function parse(string $answer, array $plan): array {
         if (!$plan['enabled']) {
             return ['content'=>$answer,'calls'=>[],'attemptedToolCall'=>false];
+        }
+        $dsml=self::extractDsml($answer);
+        if ($dsml!==null) {
+            if ($dsml['raw']) {
+                if (preg_match('/^\s*<\s*[\/｜|]/',$answer)) return ['content'=>'','calls'=>[],'attemptedToolCall'=>true];
+                $content=trim(preg_replace('#</?[^>]*\bDSML\b[^>]*>#s','',$answer));
+                return ['content'=>$content,'calls'=>[],'attemptedToolCall'=>false];
+            }
+            $calls=self::buildDsmlCalls($dsml['inner'],$plan);
+            if (!empty($calls)) return ['content'=>'','calls'=>$calls,'attemptedToolCall'=>true];
+            return ['content'=>'','calls'=>[],'attemptedToolCall'=>true];
         }
         $payload=self::extractPayload($answer);
         if (!$payload) {
@@ -109,6 +121,10 @@ class ToolCalling {
         foreach(self::TOOL_TAGS as $tag){
             if (str_starts_with($trim,$tag)) return 'TOOL';
         }
+        // DeepSeek 原生 DSML 工具调用标记（如 <｜｜DSML｜｜ calls>…invoke…）
+        if (stripos($trim,'DSML')!==false) return 'TOOL';
+        if (preg_match('/<(?:｜|\|)[^>]*\b(invoke|calls)\b/i',$trim)) return 'TOOL';
+        if (preg_match('/^<\s*[｜|]/',$trim)) return 'WAIT';
         foreach(self::TOOL_TAGS as $tag){
             if (str_starts_with($tag,$trim)) return 'WAIT';
         }
@@ -124,6 +140,63 @@ class ToolCalling {
             return str_contains($trim,'"tool_calls"') ? 'TOOL' : ((strlen($trim)>=64 || str_contains($trim,'}')) ? 'CONTENT' : 'WAIT');
         }
         return 'CONTENT';
+    }
+
+    // 提取 DeepSeek 原生 DSML 工具调用块（也兜底全角竖线风格的同类标记）
+    private static function extractDsml(string $a): ?array {
+        $looksLikeDsml = stripos($a,'DSML')!==false || preg_match('/<(?:｜|\|)[^>]*\b(?:invoke|calls|parameters)\b/i',$a);
+        if (!$looksLikeDsml) return null;
+        $blocks=[];
+        $inner='';
+        if (preg_match_all('#<[^>/]*\bDSML\b[^>]*\bcalls\b[^>]*>(.*?)<\s*/[^>]*\bDSML\b[^>]*\bcalls\b[^>]*>#si',$a,$m)) {
+            // calls 包裹：inner 取包裹内容（内含 invoke 块）
+            foreach ($m[0] as $i=>$full) { $blocks[]=$full; $inner.="\n".$m[1][$i]; }
+        } elseif (preg_match_all('#<(?:｜|\|)[^>]*\bcalls\b[^>]*>(.*?)<\s*/(?:｜|\|)[^>]*\bcalls\b[^>]*>#s',$a,$m)) {
+            foreach ($m[0] as $i=>$full) { $blocks[]=$full; $inner.="\n".$m[1][$i]; }
+        } elseif (preg_match_all('#<[^>/]*\bDSML\b[^>]*\binvoke\b[^>]*>.*?<\s*/[^>]*\bDSML\b[^>]*\binvoke\b[^>]*>#si',$a,$m)) {
+            // 裸 invoke（无 calls 包裹）：inner 需保留 invoke 标签本身
+            foreach ($m[0] as $full) { $blocks[]=$full; $inner.="\n".$full; }
+        } elseif (preg_match_all('#<(?:｜|\|)[^>]*\binvoke\b[^>]*>.*?<\s*/(?:｜|\|)[^>]*\binvoke\b[^>]*>#s',$a,$m)) {
+            foreach ($m[0] as $full) { $blocks[]=$full; $inner.="\n".$full; }
+        }
+        if ($inner==='') return ['blocks'=>$blocks,'inner'=>'','raw'=>true];
+        return ['blocks'=>$blocks,'inner'=>$inner,'raw'=>false];
+    }
+
+    private static function buildDsmlCalls(string $inner, array $plan): array {
+        if (!preg_match_all('#(<[^>/]*\bDSML\b[^>]*\binvoke\b[^>]*>)(.*?)<\s*/[^>]*\bDSML\b[^>]*\binvoke\b[^>]*>#si',$inner,$ms,PREG_SET_ORDER)) return [];
+        $out=[];
+        foreach ($ms as $m) {
+            if (!preg_match('/\bname\s*=\s*[\'"]([^\'"]+)[\'"]/',$m[1],$nm)) continue;
+            $name=trim($nm[1]);
+            if (!isset($plan['tools'][$name])) continue;
+            $args=[];
+            if (preg_match_all('#(<[^>/]*\bDSML\b[^>]*\bparameter\b[^>]*>)(.*?)<\s*/[^>]*\bDSML\b[^>]*\bparameter\b[^>]*>#si',$m[2],$ps,PREG_SET_ORDER)) {
+                foreach ($ps as $p) {
+                    if (!preg_match('/\bname\s*=\s*[\'"]([^\'"]+)[\'"]/',$p[1],$pn)) continue;
+                    $args[$pn[1]]=self::dsmlValue($p[2],$p[1]);
+                }
+            }
+            $norm = empty($args) ? '{}' : self::normalizeArguments($args);
+            if ($norm===null) continue;
+            $out[]=['id'=>'call_'.substr(str_replace('-','',bin2hex(random_bytes(16))),0,24),'name'=>$name,'arguments'=>$norm];
+            if (!$plan['parallel'] || count($out)>=64) break;
+        }
+        return $out;
+    }
+
+    private static function dsmlValue(string $raw, string $header) {
+        $raw=trim($raw);
+        if (preg_match('/\bstring\s*=\s*[\'"]?(?:true|1)[\'"]?/i',$header)) return $raw;
+        if (preg_match('/\bstring\s*=\s*[\'"]?(?:false|0)[\'"]?/i',$header)) {
+            if ($raw!=='') { $j=json_decode($raw,true); if (json_last_error()===JSON_ERROR_NONE && $j!==null) return $j; }
+            return $raw;
+        }
+        if ($raw!=='' && ($raw[0]==='{' || $raw[0]==='[')) {
+            $j=json_decode($raw,true);
+            if (json_last_error()===JSON_ERROR_NONE && $j!==null) return $j;
+        }
+        return $raw;
     }
 
     private static function extractPayload(string $answer): ?array {
