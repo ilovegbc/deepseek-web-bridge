@@ -11,7 +11,8 @@
     "sync": "powershell -NoProfile -ExecutionPolicy Bypass -File build/sync-gateway.ps1",
     "download-env": "powershell -NoProfile -ExecutionPolicy Bypass -File build/download-env.ps1",
     "prepare-payload": "powershell -NoProfile -ExecutionPolicy Bypass -File build/prepare-payload.ps1",
-    "build": "npm run sync && npm run prepare-payload",
+    "assets": "powershell -NoProfile -ExecutionPolicy Bypass -File build/make-assets.ps1",
+    "build": "npm run sync && npm run assets && npm run prepare-payload",
     "dist": "npm run build && electron-builder --win nsis"
   },
   "devDependencies": {
@@ -38,16 +39,23 @@
     "asar": true,
     "win": {
       "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "icon": "build/assets/icon.ico",
       "requestedExecutionLevel": "asInvoker"
     },
     "nsis": {
-      "oneClick": true,
+      "oneClick": false,
       "perMachine": false,
-      "allowToChangeInstallationDirectory": false,
-      "createDesktopShortcut": true,
+      "allowToChangeInstallationDirectory": true,
+      "runAfterFinish": true,
+      "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
       "shortcutName": "DeepSeek Web Bridge",
-      "deleteAppDataOnUninstall": false
+      "deleteAppDataOnUninstall": false,
+      "installerIcon": "build/assets/icon.ico",
+      "uninstallerIcon": "build/assets/icon.ico",
+      "installerHeaderIcon": "build/assets/icon.ico",
+      "installerSidebar": "build/assets/installerSidebar.bmp",
+      "uninstallerSidebar": "build/assets/installerSidebar.bmp"
     }
   }
 }
