@@ -40,6 +40,24 @@ https://chat.deepseek.com/  (真实网页会话，每账号独立登录态)
 
 对客户端完全无状态：任意 OpenAI 兼容客户端每次带上完整历史即可。
 
+### 输出保真（Markdown）
+
+网页版把回答渲染成 HTML 后，`innerText` 只剩纯文本——表格被拆成 tab 分隔、`**加粗**` 消失、代码块丢掉围栏。网关改为从 React fiber 的 `markdown` 属性读**渲染前的原始 markdown 源码**（网页「复制」按钮拷的也是它）：
+
+- 表格 `|---|`、`**加粗**`、列表、代码围栏等语法原样返回，流式 / 非流式一致
+- 思考过程是纯文本节点（`.ds-think-content`），仍按纯文本读取
+- 联网搜索的引用占位 `[reference:N]` **直接剥掉**，API 不输出引用链接
+
+### 联网搜索与深度思考
+
+每次发送前 `ensureModes` 校正输入框开关：**联网搜索默认强制关闭**，**深度思考保持开启**。按钮按文本识别（日志 `[modes]`），开关未变化时不产生额外等待。
+
+### 性能
+
+- 页面状态**增量读取**：只回新增片段，避免每次轮询全量取文本（轮询间隔 200ms）
+- **快进路径**：确认刚 freshChat 过的干净会话跳过 idle / fresh 等待；开关无变化不 sleep
+- 固定等待已全部移除，单请求注入开销约几毫秒；耗时大头是 DeepSeek 服务端首字延迟（约 6s）
+
 ### 号池（Account Pool）
 
 单账号单会话无法并发：一条 chat 占用页面时，其他请求只能排队。号池用**多账号**解决：
@@ -236,6 +254,12 @@ A: `manage.ps1 -Action start -GatewayPort xxx -SidecarPort yyy`，并停止旧�
 
 **Q: 页面改版选择器失效**  
 A: 更新 `node/providers.js` 中 `selectors`。
+
+**Q: 想开联网搜索**  
+A: 网关每次发送前会强制关闭「联网搜索」（保留「深度思考」）。需要联网时改 `node/bridge.js` 的 `ENSURE_MODES_SCRIPT` 里对 `isSearch` 的分支。
+
+**Q: 回答里的表格 / 加粗变成纯文本了**  
+A: 网关读的是 React fiber 的原始 markdown 源码，正常应原样返回；若出现此问题说明页面结构改版，检查 `node/bridge.js` 的 `fiberMarkdown`。
 
 ## 安全注意
 
