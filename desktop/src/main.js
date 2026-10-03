@@ -120,6 +120,8 @@ function buildEnv() {
     const bundled = findBundledChromium();
     if (bundled) env.CHROME_PATH = bundled;
   }
+  // 显式指定 php.ini 所在目录，避免继承外部的 PHPRC 而漏加载 curl 等扩展
+  env.PHPRC = path.dirname(settings.phpPath || path.join(phpHome(), 'php.exe'));
   delete env.PHP_BIN;
   delete env.NODE_BIN;
   return env;
