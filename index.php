@@ -487,6 +487,8 @@ if ($path==='/v1/chat/completions' || $path==='/chat/completions' || $path==='/v
             'created'=>time(),
             'model'=>$modelReq,
             'choices'=>[['index'=>0,'message'=>$msg,'finish_reason'=>$finish]],
+            'usage'=>chat_usage((string)$prompt, $answerText, (string)$thinkingText),
+            'system_fingerprint'=>'fp_deepseek_web',
         ];
         log_line("Gateway","chat_done id=$traceId stream=false answerChars=".strlen($answerText));
         header("Content-Type: application/json");
@@ -602,7 +604,11 @@ if ($path==='/v1/chat/completions' || $path==='/chat/completions' || $path==='/v
         }
         $finish = 'stop';
     }
-    $emit(sse_done($id, $created, $finish, $modelReq));
+    $usage = chat_usage($plan['prompt'], $finalAnswer, $thinkingBuf);
+    $emit(sse_done($id, $created, $finish, $modelReq, $usage));
+    if (!empty($body['stream_options']['include_usage'])) {
+        $emit(sse_usage($id, $created, $usage, $modelReq));
+    }
     echo "data: [DONE]\n\n";
     if (function_exists('flush')) flush();
     log_line("Gateway","chat_done id=$traceId stream=true answerChars=".strlen($finalAnswer));

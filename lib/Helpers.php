@@ -58,15 +58,50 @@ function sse_tool_chunk(string $id, int $created, array $calls, bool $first, str
     ], JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
 }
 
-function sse_done(string $id, int $created, string $finish, string $model = ''): string {
+function sse_done(string $id, int $created, string $finish, string $model = '', ?array $usage = null): string {
     // delta must be {} not []
-    return json_encode([
+    $obj = [
         'id'=>$id,
         'object'=>'chat.completion.chunk',
         'created'=>$created,
         'model'=>$model !== '' ? $model : DEFAULT_MODEL,
         'choices'=>[['index'=>0,'delta'=>(object)[],'finish_reason'=>$finish]]
+    ];
+    if ($usage !== null) $obj['usage'] = $usage;
+    return json_encode($obj, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
+}
+
+function sse_usage(string $id, int $created, array $usage, string $model = ''): string {
+    return json_encode([
+        'id'=>$id,
+        'object'=>'chat.completion.chunk',
+        'created'=>$created,
+        'model'=>$model !== '' ? $model : DEFAULT_MODEL,
+        'choices'=>[],
+        'usage'=>$usage,
     ], JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
+}
+
+// 粗略 token 估算：CJK/全角字符 ≈ 1 token，其余字符 ≈ 4 字符/token
+function estimate_tokens(string $text): int {
+    if ($text === '') return 0;
+    $cjk = (int)preg_match_all('/[\x{2E80}-\x{9FFF}\x{3000}-\x{303F}\x{FF00}-\x{FFEF}\x{AC00}-\x{D7AF}]/u', $text);
+    $chars = function_exists('mb_strlen') ? (int)mb_strlen($text, 'UTF-8') : strlen($text);
+    $other = max(0, $chars - $cjk);
+    return $cjk + (int)ceil($other / 4);
+}
+
+function chat_usage(string $prompt, string $answer, string $thinking = ''): array {
+    $pt = estimate_tokens($prompt);
+    $rt = estimate_tokens($thinking);
+    $ct = estimate_tokens($answer) + $rt;
+    return [
+        'prompt_tokens'=>$pt,
+        'completion_tokens'=>$ct,
+        'total_tokens'=>$pt + $ct,
+        'prompt_tokens_details'=>['cached_tokens'=>0],
+        'completion_tokens_details'=>['reasoning_tokens'=>$rt],
+    ];
 }
 
 function content_text($content): string {
