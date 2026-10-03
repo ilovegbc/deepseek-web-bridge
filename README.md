@@ -81,7 +81,7 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8080/login/close   # 关闭
 
 ## 桌面版（Windows 安装程序）
 
-不想装 PHP / Node / 浏览器？从 [Releases](../../releases) 下载 `DeepSeekWebBridge-Setup-x.y.z.exe`，一键安装（当前用户、免管理员）：
+不想装 PHP / Node / 浏览器？从 [Releases](../../releases) 下载Windows安装包，一键安装（当前用户、免管理员）：
 
 - **内置完整运行时**：官方 PHP NTS + 官方 Node（构建时从官网下载并校验 SHA256）+ Playwright Chromium，全程离线可用；**不读不写系统环境变量**
 - **应用内页面视图**：网关 `/login` 登录页显示在应用窗口里，**不会弹外部浏览器**
