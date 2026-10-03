@@ -415,11 +415,20 @@ async function debugStop(page) {
       const r = el.getBoundingClientRect();
       const vis = el.isConnected && !el.hidden && r.width > 0 && r.height > 0;
       if (!vis) return;
-      let html = el.outerHTML || '';
-      html = html.replace(/\s+/g, ' ');
-      out.push(html.slice(0, 260));
+      const svg = el.querySelector('svg');
+      const icon = svg ? (svg.innerHTML || '').replace(/\s+/g, ' ').slice(0, 120) : '';
+      out.push({
+        aria: el.getAttribute('aria-label') || '',
+        testid: el.getAttribute('data-testid') || '',
+        title: el.getAttribute('title') || '',
+        text: (el.textContent || '').trim().slice(0, 40),
+        cls: (typeof el.className === 'string' ? el.className : '').replace(/\s+/g, ' ').slice(0, 120),
+        hasRect: !!(svg && svg.querySelector('rect')),
+        hasPath: !!(svg && svg.querySelector('path')),
+        icon
+      });
     });
-    return out.slice(0, 15);
+    return out.slice(0, 20);
   });
 }
 

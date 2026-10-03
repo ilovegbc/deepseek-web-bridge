@@ -565,6 +565,15 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 404, { error: { message: 'no page available' } });
     }
 
+    if (route === '/debug/stop') {
+      for (const s of pool.slots.values()) {
+        if (!s.page || s.page.isClosed()) continue;
+        const data = await bridge.debugStop(s.page).catch(e => ({ error: String(e.message || e) }));
+        return sendJson(res, 200, { accountId: s.id || (s.def && s.def.id) || '', data });
+      }
+      return sendJson(res, 404, { error: { message: 'no page available' } });
+    }
+
     if (route === '/providers') {
       const list = Object.values(PROVIDERS).map(p => ({
         id: p.id, displayName: p.displayName, homeUrl: p.homeUrl, model: p.model,

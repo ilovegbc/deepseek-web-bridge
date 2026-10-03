@@ -174,8 +174,10 @@ async function chat(page, providerId, prompt, opts = {}) {
   let debugDumped = false;
   let stableCount = 0;
   let prevAnswer = '';
+  let finishGraceAt = 0;
   let thinkingDirty = false;
   let sawAnswer = false;
+  const graceMs = provider.completionGraceMs || 0;
 
   while (Date.now() < deadline) {
     if (shouldCancel()) break;
@@ -241,18 +243,26 @@ async function chat(page, providerId, prompt, opts = {}) {
 
       if (!st.generating && st.answer === prevAnswer) {
         stableCount += 1;
-        if (stableCount >= provider.completionStablePolls) break;
+        if (stableCount >= provider.completionStablePolls) {
+          if (!finishGraceAt) finishGraceAt = Date.now();
+          if (Date.now() - finishGraceAt >= graceMs) break;
+        }
       } else {
         stableCount = 0;
+        finishGraceAt = 0;
       }
       prevAnswer = st.answer;
     } else if (sawAnswer && !st.generating) {
       if (st.answer === prevAnswer) {
         stableCount += 1;
-        if (stableCount >= provider.completionStablePolls) break;
+        if (stableCount >= provider.completionStablePolls) {
+          if (!finishGraceAt) finishGraceAt = Date.now();
+          if (Date.now() - finishGraceAt >= graceMs) break;
+        }
       }
     } else {
       stableCount = 0;
+      finishGraceAt = 0;
       if (st.answer) prevAnswer = st.answer;
     }
   }

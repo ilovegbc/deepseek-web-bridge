@@ -13,6 +13,7 @@ const PROVIDERS = {
     loginStrategy: 'deepseek_storage',
     freshChatPerApiRequest: true,
     completionStablePolls: 3,
+    completionGraceMs: 3000, // 文本稳定后再观察 3s，页面渲染卡顿不再提前收尾
     sessionPattern: '/a/chat/s/([^/?]+)',
     selectors: {
       composer: 'textarea',
