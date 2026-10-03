@@ -556,8 +556,7 @@ if ($path==='/v1/chat/completions' || $path==='/chat/completions' || $path==='/v
         if (stripos($chunk, 'DSML') !== false
             || preg_match('/<(?:｜|\|)[^>]*\b(?:invoke|calls|parameters)\b/i', $chunk)
             || preg_match('/<\/?(?:tool_calls|tool_call)/', $chunk)
-            || preg_match('/<\s*[｜|][^>]{0,48}$/', $chunk)
-            || preg_match('/<\s*$/', $chunk)) {
+            || preg_match('/<[^>\s]{0,14}$/', $chunk)) {
             $toolMode = 'WAIT';
             $toolBuf = $chunk;
             return;

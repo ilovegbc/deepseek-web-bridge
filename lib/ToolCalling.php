@@ -80,7 +80,10 @@ class ToolCalling {
                 return ['content'=>$content,'calls'=>[],'attemptedToolCall'=>false];
             }
             $calls=self::buildDsmlCalls($dsml['inner'],$plan);
-            if (!empty($calls)) return ['content'=>'','calls'=>$calls,'attemptedToolCall'=>true];
+            if (!empty($calls)) {
+                $content=trim(str_replace($dsml['blocks'],'',$answer));
+                return ['content'=>$content,'calls'=>$calls,'attemptedToolCall'=>true];
+            }
             return ['content'=>'','calls'=>[],'attemptedToolCall'=>true];
         }
         $payload=self::extractPayload($answer);
@@ -109,7 +112,7 @@ class ToolCalling {
             $calls[]=['id'=>$id,'name'=>$name,'arguments'=>$norm];
             if (!$plan['parallel']) break;
         }
-        if (!empty($calls)) return ['content'=>'','calls'=>$calls,'attemptedToolCall'=>true];
+        if (!empty($calls)) return ['content'=>($payload['outside'] ?? ''),'calls'=>$calls,'attemptedToolCall'=>true];
         if ($explicit) return ['content'=>'','calls'=>[],'attemptedToolCall'=>true];
         return ['content'=>$answer,'calls'=>[],'attemptedToolCall'=>false];
     }
@@ -121,10 +124,14 @@ class ToolCalling {
         foreach(self::TOOL_TAGS as $tag){
             if (str_starts_with($trim,$tag)) return 'TOOL';
         }
+        // 工具标记出现在正文之后（说明文字 + tool_calls）也按工具处理
+        if (preg_match('/<\/?tool_calls?\b/i',$trim)) return 'TOOL';
         // DeepSeek 原生 DSML 工具调用标记（如 <｜｜DSML｜｜ calls>…invoke…）
         if (stripos($trim,'DSML')!==false) return 'TOOL';
         if (preg_match('/<(?:｜|\|)[^>]*\b(invoke|calls)\b/i',$trim)) return 'TOOL';
         if (preg_match('/^<\s*[｜|]/',$trim)) return 'WAIT';
+        // 块尾未闭合的标记开头（如 <tool_ca、<｜｜DSM）：先暂缓，等下一块补全
+        if (preg_match('/<[^>\s]{0,14}$/',$trim)) return 'WAIT';
         foreach(self::TOOL_TAGS as $tag){
             if (str_starts_with($tag,$trim)) return 'WAIT';
         }
@@ -200,11 +207,12 @@ class ToolCalling {
     }
 
     private static function extractPayload(string $answer): ?array {
-        if (preg_match('/^\s*<tool_calls>\s*(.*?)\s*<\/tool_calls>/s',$answer,$m)){
-            return ['text'=>trim($m[1]),'explicit'=>true];
+        // 工具块允许出现在回答任意位置（模型可能先写一句说明再给 tool_calls）
+        if (preg_match('/(.*?)<tool_calls>\s*(.*?)\s*<\/tool_calls>(.*)/s',$answer,$m)){
+            return ['text'=>trim($m[2]),'explicit'=>true,'outside'=>trim($m[1]."\n".$m[3])];
         }
-        if (preg_match('/^\s*<tool_call>\s*(.*?)\s*<\/tool_call>/s',$answer,$m)){
-            return ['text'=>trim($m[1]),'explicit'=>true];
+        if (preg_match('/(.*?)<tool_call>\s*(.*?)\s*<\/tool_call>(.*)/s',$answer,$m)){
+            return ['text'=>trim($m[2]),'explicit'=>true,'outside'=>trim($m[1]."\n".$m[3])];
         }
         $t=trim($answer);
         if (str_starts_with($t,'```') && str_ends_with($t,'```')){

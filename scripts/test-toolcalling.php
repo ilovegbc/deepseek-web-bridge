@@ -94,7 +94,30 @@ foreach ($cases as $i=>$c) {
     check("streamMode#$i ".var_export($c[0],true)." req=".($c[1]?'1':'0')." -> $c[2]", $got===$c[2], "got $got");
 }
 
-// 12. createPlan 协议中包含 DSML 说明
+// 12. 正文前有说明文字 + tool_calls 块（不再要求标签在开头）
+$pre = "I'll explore the project structure first.\n\n".'<tool_calls>[{"name":"pwsh","arguments":{"command":"Get-ChildItem","description":"List files"}},{"name":"glob","arguments":{"pattern":"*.md"}}]</tool_calls>';
+$r = ToolCalling::parse($pre, $planFull);
+check('preamble + tool_calls parsed as calls', count($r['calls'])===2 && ($r['calls'][0]['name']??'')==='pwsh', json_encode($r));
+check('preamble kept as content', str_contains($r['content'],'explore the project structure'), $r['content']);
+
+// 13. 正文 + 残缺 tool_calls（无闭合）仍然当正文（不误报工具）
+$bad = "说明文字\n<tool_calls>[{\"name\":\"pwsh\",\"arguments\":{\"command\":\"x\"}}]";
+$r = ToolCalling::parse($bad, $planFull);
+check('unclosed tool_calls stays content', count($r['calls'])===0 && !$r['attemptedToolCall'], json_encode($r));
+
+// 14. streamMode：正文后才出现标记
+$cases2 = [
+    ["I'll explore first.\n<tool_calls>", false, 'TOOL'],
+    ["I'll explore first.", false, 'CONTENT'],
+    ["说明文字</tool_call>", false, 'TOOL'],
+    ["说明文字<tool_ca", false, 'WAIT'],
+];
+foreach ($cases2 as $i=>$c) {
+    $got = ToolCalling::streamMode($c[0], $c[1]);
+    check("streamMode2#$i -> $c[2]", $got===$c[2], "got $got");
+}
+
+// 15. createPlan 协议中包含 DSML 说明
 $plan = ToolCalling::createPlan(['tools'=>[['type'=>'function','function'=>['name'=>'pwsh','description'=>'d','parameters'=>['type'=>'object']]]]], 'base');
 check('createPlan mentions DSML', str_contains($plan['prompt'],'DSML'));
 
