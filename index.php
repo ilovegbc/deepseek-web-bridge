@@ -418,7 +418,8 @@ if ($path==='/v1/chat/completions' || $path==='/chat/completions' || $path==='/v
     }
 
     $prompt = extract_prompt($body);
-    if ($prompt==='') {
+    $images = extract_images($body);
+    if ($prompt==='' && empty($images)) {
         header("HTTP/1.1 400 Bad Request");
         header("Content-Type: application/json");
         echo json_error("no message content");
@@ -438,7 +439,7 @@ if ($path==='/v1/chat/completions' || $path==='/chat/completions' || $path==='/v
     log_line("Gateway","chat_start id=$traceId ts=".round(microtime(true)*1000)." stream=".($isStream?'true':'false')." model=$modelReq provider=$providerId promptChars=".strlen($prompt)." tools=".count($plan['tools']));
 
     if (!$isStream) {
-        $result = webdriver_chat($providerId, $plan['prompt'], false, $traceId);
+        $result = webdriver_chat($providerId, $plan['prompt'], false, $traceId, null, $images);
         if (empty($result['ok'])) {
             $msg = $result['error'] ?? 'gateway busy';
             $code = ($result['code'] ?? 0) === 429 ? 429 : 503;
@@ -566,7 +567,7 @@ if ($path==='/v1/chat/completions' || $path==='/chat/completions' || $path==='/v
         $emit(sse_chunk($id, $created, 'answer', $chunk, false, $modelReq));
     };
 
-    $streamResult = webdriver_chat($providerId, $plan['prompt'], true, $traceId, $onChunk);
+    $streamResult = webdriver_chat($providerId, $plan['prompt'], true, $traceId, $onChunk, $images);
 
     if (empty($streamResult['ok'])) {
         $emit(json_error($streamResult['error'] ?? 'gateway busy'));

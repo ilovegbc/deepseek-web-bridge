@@ -335,13 +335,16 @@ async function handleChat(body, res) {
   const providerId = body.provider || 'deepseek';
   const prompt = body.prompt || '';
   const stream = !!body.stream;
+  const images = Array.isArray(body.images)
+    ? body.images.filter(x => x && typeof x.url === 'string' && x.url.length > 0).slice(0, 4)
+    : [];
   const timeoutSec = body.timeoutSec || CHAT_TIMEOUT_SEC;
   const traceId = body.traceId || String(Date.now());
   const queueWaitMs = Number.isFinite(body.queueWaitMs) ? body.queueWaitMs : 90000;
   const wantAccount = body.accountId ? String(body.accountId) : null;
   console.log(`[perf] arrive trace=${traceId} ts=${Date.now()}`);
 
-  if (!prompt) {
+  if (!prompt && images.length === 0) {
     return sendJson(res, 400, { error: { message: 'no message content' } });
   }
   const p = getProvider(providerId);
@@ -416,7 +419,7 @@ async function handleChat(body, res) {
           res.write(JSON.stringify({ type: 'chunk', kind, chunk }) + '\n');
         } catch (_) {}
       };
-      const result = await chat(slot.page, providerId, prompt, { timeoutSec, onChunk, keep: !!body.keep });
+      const result = await chat(slot.page, providerId, prompt, { timeoutSec, onChunk, keep: !!body.keep, images });
       try {
         res.write(JSON.stringify({
           type: 'done', thinking: result.thinking, answer: result.answer,
@@ -425,7 +428,7 @@ async function handleChat(body, res) {
       } catch (_) {}
       res.end();
     } else {
-      const result = await chat(slot.page, providerId, prompt, { timeoutSec, keep: !!body.keep });
+      const result = await chat(slot.page, providerId, prompt, { timeoutSec, keep: !!body.keep, images });
       try { await slot.context.storageState({ path: profilePath(def.id) }); } catch (_) {}
       if (!result.answer && !result.thinking) {
         return sendJson(res, 503, { error: { message: 'gateway busy' }, traceId, accountId: def.id });

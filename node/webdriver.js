@@ -113,6 +113,7 @@ async function chat(page, providerId, prompt, opts = {}) {
   const timeoutSec = opts.timeoutSec || 120;
   const onChunk = opts.onChunk || null;
   const shouldCancel = opts.shouldCancel || (() => false);
+  const images = Array.isArray(opts.images) ? opts.images : [];
 
   const t0 = Date.now();
   const ready = await waitUntilReady(page, provider, shouldCancel);
@@ -156,7 +157,7 @@ async function chat(page, providerId, prompt, opts = {}) {
   const baseThinking = base ? base.thinking : '';
   if (shouldCancel()) return { thinking: '', answer: '' };
 
-  const sendResult = await bridge.sendPrompt(page, prompt);
+  const sendResult = await bridge.sendPrompt(page, prompt, images);
   const tSend = Date.now();
   if (!sendResult || !String(sendResult).includes('ok')) {
     return { thinking: '', answer: '' };

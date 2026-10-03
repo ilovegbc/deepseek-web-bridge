@@ -188,6 +188,54 @@ function extract_prompt(array $body): string {
     return implode("\n\n", $parts);
 }
 
+function download_image_data_url(string $url): ?string {
+    if (str_starts_with($url, 'data:image/')) return $url;
+    if (!preg_match('#^https?://#i', $url)) return null;
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => 15,
+        CURLOPT_CONNECTTIMEOUT => 5,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_MAXREDIRS => 3,
+        CURLOPT_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS,
+    ]);
+    $body = curl_exec($ch);
+    $type = (string)curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    if ($code !== 200 || !is_string($body) || $body === '' || strlen($body) > 5 * 1024 * 1024) return null;
+    if ($type === '' || !str_starts_with($type, 'image/')) return null;
+    return 'data:' . explode(';', $type)[0] . ';base64,' . base64_encode($body);
+}
+
+// 提取 OpenAI 多模态消息里的图片（data URL 或 http(s) 链接），最多 4 张
+function extract_images(array $body): array {
+    $out = [];
+    if (!isset($body['messages']) || !is_array($body['messages'])) return $out;
+    foreach ($body['messages'] as $m) {
+        if (!is_array($m)) continue;
+        $c = $m['content'] ?? null;
+        if (!is_array($c)) continue;
+        foreach ($c as $part) {
+            if (!is_array($part) || ($part['type'] ?? '') !== 'image_url') continue;
+            $u = $part['image_url'] ?? '';
+            if (is_array($u)) $u = $u['url'] ?? '';
+            if (!is_string($u) || $u === '') continue;
+            if (str_starts_with($u, 'data:image/')) {
+                if (strlen($u) > 6 * 1024 * 1024) continue;
+                $url = $u;
+            } else {
+                $url = download_image_data_url($u);
+                if ($url === null) continue;
+            }
+            $out[] = ['url' => $url];
+            if (count($out) >= 4) return $out;
+        }
+    }
+    return $out;
+}
+
 function provider_request_error(string $providerId, array $body): ?string {
     $supportsTools = ($providerId === 'deepseek');
     if (!$supportsTools && isset($body['tools']) && is_array($body['tools']) && count($body['tools'])>0){

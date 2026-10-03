@@ -84,7 +84,7 @@ function sidecar_health(): array {
     return sidecar_request('/health', null, 3);
 }
 
-function webdriver_chat(string $providerId, string $prompt, bool $stream, string $traceId, ?callable $onChunk = null): array {
+function webdriver_chat(string $providerId, string $prompt, bool $stream, string $traceId, ?callable $onChunk = null, array $images = []): array {
     if (function_exists('set_time_limit')) { @set_time_limit(0); }
     if (function_exists('ignore_user_abort')) { @ignore_user_abort(true); }
     $post = [
@@ -94,6 +94,7 @@ function webdriver_chat(string $providerId, string $prompt, bool $stream, string
         'timeoutSec' => CHAT_TIMEOUT_SEC,
         'traceId' => $traceId,
     ];
+    if (!empty($images)) $post['images'] = array_values($images);
     $url = SIDECAR_URL . '/chat';
     $ch = curl_init($url);
     curl_setopt_array($ch, [

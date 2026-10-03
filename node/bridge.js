@@ -143,7 +143,7 @@ const BRIDGE_SCRIPT = `
 `;
 
 const SEND_SCRIPT = `
-((text) => {
+((text, images) => {
   const cfg = window.__aiGatewayConfig;
   if (!cfg) return 'no_config';
   const composer = document.querySelector(cfg.selectors.composer);
@@ -203,10 +203,52 @@ const SEND_SCRIPT = `
     setTimeout(submit, 100);
   }
 
-  if (cfg.selectors.contentEditableComposer) submitContentEditable(composer, text);
-  else submitTextarea(composer, text);
-  return 'ok';
-})((%j))
+  async function attachImages(list) {
+    if (!list || !list.length) return 'none';
+    let input = null;
+    for (const el of document.querySelectorAll('input[type="file"]')) {
+      const acc = el.getAttribute('accept') || '';
+      if (acc.includes('image')) { input = el; break; }
+      if (!input) input = el;
+    }
+    if (!input) return 'no_input';
+    const dt = new DataTransfer();
+    for (const img of list) {
+      try {
+        const res = await fetch(img.url);
+        const blob = await res.blob();
+        let ext = (blob.type.split('/')[1] || 'png').split('+')[0];
+        if (ext === 'jpeg') ext = 'jpg';
+        dt.items.add(new File([blob], 'image.' + ext, { type: blob.type || 'image/png' }));
+      } catch (_) {}
+    }
+    if (!dt.items.length) return 'fetch_failed';
+    input.files = dt.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    const started = Date.now();
+    const deadline = started + 20000;
+    for (;;) {
+      const previews = Array.from(document.querySelectorAll('img')).filter(el => {
+        const src = el.currentSrc || el.src || '';
+        if (src.indexOf('blob:') !== 0 && src.indexOf('data:') !== 0) return false;
+        const r = el.getBoundingClientRect();
+        return r.width > 16 && r.height > 16 && r.top > window.innerHeight * 0.3;
+      });
+      if (previews.length > 0) { await new Promise(r => setTimeout(r, 400)); return 'ok'; }
+      const n = input.files ? input.files.length : 0;
+      if (n === 0 && Date.now() - started > 1500) return 'ok';
+      if (Date.now() >= deadline) return 'timeout';
+      await new Promise(r => setTimeout(r, 250));
+    }
+  }
+
+  return (async () => {
+    const attached = await attachImages(images);
+    if (cfg.selectors.contentEditableComposer) submitContentEditable(composer, text);
+    else submitTextarea(composer, text);
+    return 'ok;attach=' + attached;
+  })();
+})((%j), (%k))
 `;
 
 const ENSURE_MODES_SCRIPT = `
@@ -307,8 +349,8 @@ async function readState(page, since) {
   return await page.evaluate(script);
 }
 
-async function sendPrompt(page, text) {
-  const script = SEND_SCRIPT.replace('%j', () => JSON.stringify(text));
+async function sendPrompt(page, text, images) {
+  const script = SEND_SCRIPT.replace('%j', () => JSON.stringify(text)).replace('%k', () => JSON.stringify(images || []));
   return await page.evaluate(script);
 }
 
