@@ -2,7 +2,7 @@
 
 OpenAI 兼容的本地网关：用 **PHP** 做接入层，用 **Playwright sidecar** 驱动 DeepSeek 网页会话，让任意 OpenAI SDK / 客户端（OpenCode、Continue、LobeChat 等）直接对话。
 
-> 仅支持 **DeepSeek**（`deepseek-chat`）。
+> 仅支持 **DeepSeek**（`deepseek-chat`）。特性：流式 / 非流式、**工具调用（含原生 DSML 兼容）**、**图片输入（多模态）**、原始 markdown 保真、`usage` token / 缓存命中统计、多账号号池。
 
 ## 免责声明（Disclaimer）
 
@@ -47,6 +47,38 @@ https://chat.deepseek.com/  (真实网页会话，每账号独立登录态)
 - 表格 `|---|`、`**加粗**`、列表、代码围栏等语法原样返回，流式 / 非流式一致
 - 思考过程是纯文本节点（`.ds-think-content`），仍按纯文本读取
 - 联网搜索的引用占位 `[reference:N]` **直接剥掉**，API 不输出引用链接
+
+### 图片输入（多模态）
+
+消息内容支持 OpenAI 多模态格式（`content: [{"type":"text"},{"type":"image_url","image_url":{"url":"..."}}]`）：
+
+- 图片可为 `data:image/...;base64,...` 或 http(s) 链接；每次最多取 4 张（单张 >6MB 跳过）
+- 发送前 sidecar 会把图片注入网页输入框（自动等待上传预览完成后）再连同文字发送，模型直接“看到”图片
+- 无状态会话：历史里的图片在后续每轮都会重新提取并上传，客户端无需特殊处理
+- 只发图片不写文字也可以（不会报 `no message content`）
+
+### 工具调用（Tools）
+
+- 请求带 `tools` 时，网关把工具定义与调用协议注入 prompt；模型可用两种格式发起调用：
+  - 网关协议：`<tool_calls>[{"name":"...","arguments":{...}}]</tool_calls>`（允许前面带一句说明文字）
+  - DeepSeek 原生 **DSML** 格式：`<｜｜DSML｜｜ calls> … <｜｜DSML｜｜ invoke name="..."> …`
+- 两种格式都会解析为标准 OpenAI `tool_calls` 返回；流式过程中标记不会明文泄漏给客户端，说明文字作为 `content` 保留
+- 工具结果（`role:"tool"`）按 OpenAI 规范拼回上下文；`tool_choice` 支持 `auto` / `required` / `none` / 指定函数
+- 回归测试：`php scripts/test-toolcalling.php`（37 项）
+
+### 用量统计（usage）
+
+响应包含 OpenAI `usage` 对象（估算值，CJK 感知）：
+
+- `prompt_tokens` / `completion_tokens` / `total_tokens`
+- `completion_tokens_details.reasoning_tokens`（深度思考计入 completion）
+- `prompt_tokens_details.cached_tokens`，以及 DeepSeek 风格的 `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`（按“前缀缓存”估算：除最后一条外的历史视为命中）
+- 流式：finish 分片带 `usage`；请求带 `stream_options.include_usage` 时额外补一条标准 usage-only 分片
+
+### 完成判定（防截断）
+
+- 页面文本稳定后再进入 `completionGraceMs`（默认 3000ms）宽限期，期间文本有新增就继续等待，避免长文渲染卡顿被误判“生成结束”而截断
+- 可在 `node/providers.js` 调整 `completionGraceMs` / `completionStablePolls`
 
 ### 联网搜索与深度思考
 
@@ -201,8 +233,8 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 | POST | `/login/close` | 关闭共用登录窗口（后台会话不受影响） |
 | GET | `/login/status` | 账号池状态 JSON（按 accountId 键控） |
 | GET/POST/DELETE | `/accounts` | 账号池增删查（POST `{"id","label"}`；DELETE `?id=`；写入 accounts.json 热加载） |
-| GET | `/v1/models` | 模型列表（任一账号已登录即 available） |
-| POST | `/v1/chat/completions` | OpenAI 兼容 chat（stream / non-stream / tools） |
+| GET | `/v1/models` | 模型列表（任一账号已登录即 available；声明 `vision` / `input_modalities` 支持图片） |
+| POST | `/v1/chat/completions` | OpenAI 兼容 chat（stream / non-stream / tools / 多模态图片；响应含 `usage`） |
 | GET | `/accounts`（sidecar :8090） | sidecar 直连：同上（仅 PHP 内部 / 本机调试用） |
 
 鉴权：除 health / login 相关 / 账号池（`/accounts`）路径外，需 `Authorization: Bearer <API_KEY>`，与 `config.php` 中 `API_KEY` 全等。
@@ -228,7 +260,8 @@ deepseek-web-bridge/
 │   ├── webdriver.js       # chat 状态机
 │   └── profiles/          # 每账号 storageState（已 gitignore）
 ├── scripts/
-│   └── manage.ps1         # 唯一管理脚本：检测/依赖/启动/停止菜单
+│   ├── manage.ps1         # 唯一管理脚本：检测/依赖/启动/停止菜单
+│   └── test-toolcalling.php  # 工具调用解析回归测试（37 项）
 ├── desktop/               # 桌面版（第二份源码）：Electron 壳 + 打包脚本
 │   ├── src/               # main/preload/renderer（内嵌页面 + 设置 + 日志）
 │   ├── build/             # download-env / sync-gateway / prepare-payload
@@ -279,6 +312,15 @@ A: 更新 `node/providers.js` 中 `selectors`。
 
 **Q: 想开联网搜索**  
 A: 网关每次发送前会强制关闭「联网搜索」（保留「深度思考」）。需要联网时改 `node/bridge.js` 的 `ENSURE_MODES_SCRIPT` 里对 `isSearch` 的分支。
+
+**Q: 回答写一半就“完成”了（截断）**  
+A: 页面长文渲染会短暂停顿，完成判定已加 3s 宽限期（`completionGraceMs`）。仍遇到可调大该值；另可检查 sidecar 日志 `[perf]` 的 `tail` 时长。
+
+**Q: 客户端提示“当前模型不支持图片” / 图片发了但模型说没看到**  
+A: 客户端（如 DSH/OpenCode）需要在模型配置里声明图片输入（pi-ai 系写 `input: [text, image]`，DeepSeek 系写 `inputModalities: [text, image]`）；网关侧已支持 `image_url` 多模态并自动上传网页。日志 `chat_start … images=N` 可确认图片是否被提取。
+
+**Q: 流式回复缺字漏字**  
+A: 旧版曾在 TCP 粘包时丢块，现已按行缓冲修复；确保使用最新版本（`lib/WebDriver.php` 含“按行缓冲”注释）。
 
 **Q: 回答里的表格 / 加粗变成纯文本了**  
 A: 网关读的是 React fiber 的原始 markdown 源码，正常应原样返回；若出现此问题说明页面结构改版，检查 `node/bridge.js` 的 `fiberMarkdown`。
