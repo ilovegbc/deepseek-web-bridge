@@ -91,17 +91,28 @@ function estimate_tokens(string $text): int {
     return $cjk + (int)ceil($other / 4);
 }
 
-function chat_usage(string $prompt, string $answer, string $thinking = ''): array {
+function chat_usage(string $prompt, string $answer, string $thinking = '', int $cached = 0): array {
     $pt = estimate_tokens($prompt);
     $rt = estimate_tokens($thinking);
     $ct = estimate_tokens($answer) + $rt;
+    $cached = max(0, min($cached, $pt));
     return [
         'prompt_tokens'=>$pt,
         'completion_tokens'=>$ct,
         'total_tokens'=>$pt + $ct,
-        'prompt_tokens_details'=>['cached_tokens'=>0],
+        'prompt_tokens_details'=>['cached_tokens'=>$cached],
         'completion_tokens_details'=>['reasoning_tokens'=>$rt],
+        'prompt_cache_hit_tokens'=>$cached,
+        'prompt_cache_miss_tokens'=>$pt - $cached,
     ];
+}
+
+// 前缀缓存估算：除最后一条消息外的历史（含系统提示）视为命中缓存
+function cached_prefix_tokens(array $body): int {
+    if (!isset($body['messages']) || !is_array($body['messages']) || count($body['messages']) < 2) return 0;
+    $msgs = $body['messages'];
+    array_pop($msgs);
+    return estimate_tokens(extract_prompt(['messages'=>$msgs]));
 }
 
 function content_text($content): string {
