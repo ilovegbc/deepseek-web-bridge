@@ -436,7 +436,7 @@ if ($path==='/v1/chat/completions' || $path==='/chat/completions' || $path==='/v
 
     $isStream = !empty($body['stream']);
     $traceId = substr(base_convert((string)hrtime(true),10,36),-8);
-    log_line("Gateway","chat_start id=$traceId ts=".round(microtime(true)*1000)." stream=".($isStream?'true':'false')." model=$modelReq provider=$providerId promptChars=".strlen($prompt)." tools=".count($plan['tools']));
+    log_line("Gateway","chat_start id=$traceId ts=".round(microtime(true)*1000)." stream=".($isStream?'true':'false')." model=$modelReq provider=$providerId promptChars=".strlen($prompt)." tools=".count($plan['tools'])." images=".count($images));
 
     if (!$isStream) {
         $result = webdriver_chat($providerId, $plan['prompt'], false, $traceId, null, $images);
