@@ -135,6 +135,26 @@ const BRIDGE_SCRIPT = `
     };
   }
 
+  // 生成中检测：存在「停止方块」实心圆按钮且没有发送箭头 => 仍在生成；未知图标按空闲处理（交给宽限期）
+  function stopVisible() {
+    try {
+      const btns = Array.from(document.querySelectorAll('div.ds-button--circle, button.ds-button--circle'));
+      const filled = [];
+      for (const el of btns) {
+        const cls = typeof el.className === 'string' ? el.className : '';
+        if (!cls.includes('ds-button--filled')) continue;
+        const r = el.getBoundingClientRect();
+        if (!el.isConnected || r.width <= 0 || r.height <= 0) continue;
+        const svg = el.querySelector('svg');
+        filled.push(svg ? (svg.innerHTML || '') : '');
+      }
+      if (filled.length === 0) return false;
+      if (filled.some(ic => ic.indexOf('M8.3125') === 0)) return false; // 发送箭头 = 空闲
+      return filled.some(ic => ic.indexOf('M2 4.88') === 0);            // 停止方块 = 生成中
+    } catch (_) {}
+    return false;
+  }
+
   return {
     composerReady: any(s.composer),
     documentComplete: document.readyState === 'complete',
@@ -145,6 +165,7 @@ const BRIDGE_SCRIPT = `
     thinking: thinkingOut,
     thinkingDelta,
     generating: any(s.generating),
+    stopVisible: stopVisible(),
     loggedIn: loggedIn(),
     banned: bannedNotice()
   };

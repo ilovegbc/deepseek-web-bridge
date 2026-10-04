@@ -19,31 +19,56 @@ const SESSION_STABLE_POLLS = 8;
 const knownClean = new WeakSet();
 
 class RewriteTolerantStream {
-  constructor() {
+  constructor(opts = {}) {
     this.buffer = '';
-    this.last = '';
+    this.last = '';        // 页面最新全文
+    this.emittedBuf = '';  // 已发给客户端、且保证是 last 前缀的文本
     this.emitted = 0;
     this.rewriteConflicts = 0;
+    this.holdTail = opts.holdTail === undefined ? 300 : opts.holdTail; // 默认扣住尾部 300 字符
+  }
+  safeBoundary(full) {
+    // 段落边界（最后一个空行）之后视为"未稳定区"；另外至少扣住尾部 holdTail 字符
+    const byBlank = full.lastIndexOf('\n\n');
+    let b = byBlank >= 0 ? byBlank + 2 : 0;
+    if (b < full.length - this.holdTail) b = full.length - this.holdTail;
+    if (b > 0 && b < full.length) {
+      const c = full.charCodeAt(b - 1);
+      if (c >= 0xD800 && c <= 0xDBFF) b += 1; // 不拆代理对
+    }
+    return Math.max(0, Math.min(b, full.length));
   }
   observe(full) {
     if (full === this.last) return null;
-    if (full.startsWith(this.last)) {
-      const chunk = full.slice(this.last.length);
-      this.last = full;
-      if (chunk) this.emitted += chunk.length;
-      return chunk || null;
-    }
-    this.rewriteConflicts += 1;
-    let i = 0;
-    const min = Math.min(full.length, this.last.length);
-    while (i < min && full[i] === this.last[i]) i++;
     this.last = full;
-    const chunk = full.slice(i);
+    // 已发出的前缀被页面改写：无法安全追加，暂不输出（收尾时再对齐）
+    if (!full.startsWith(this.emittedBuf)) {
+      this.rewriteConflicts += 1;
+      return null;
+    }
+    const safe = this.safeBoundary(full);
+    if (safe <= this.emittedBuf.length) return null;
+    const chunk = full.slice(this.emittedBuf.length, safe);
+    this.emittedBuf = full.slice(0, safe);
     if (chunk) this.emitted += chunk.length;
     return chunk || null;
   }
   flush() {
-    return null;
+    if (this.last.length > this.emittedBuf.length && this.last.startsWith(this.emittedBuf)) {
+      const chunk = this.last.slice(this.emittedBuf.length);
+      this.emittedBuf = this.last;
+      this.emitted += chunk.length;
+      return chunk || null;
+    }
+    if (this.last === this.emittedBuf) return null;
+    // 已发部分与最终不一致（中途重写）：从最长公共前缀补发，保证客户端拿到完整文本
+    let i = 0;
+    const m = Math.min(this.emittedBuf.length, this.last.length);
+    while (i < m && this.emittedBuf[i] === this.last[i]) i++;
+    const chunk = this.last.slice(i);
+    this.emittedBuf = this.last;
+    if (chunk) this.emitted += chunk.length;
+    return chunk || null;
   }
   getRewriteConflicts() { return this.rewriteConflicts; }
 }
@@ -181,9 +206,11 @@ async function chat(page, providerId, prompt, opts = {}) {
   let stableCount = 0;
   let prevAnswer = '';
   let finishGraceAt = 0;
+  let lastChangeAt = Date.now();
   let thinkingDirty = false;
   let sawAnswer = false;
   const graceMs = provider.completionGraceMs || 0;
+  const stallFailsafeMs = 90000; // 停止信号常亮但文本 90s 无变化：按卡死处理
 
   while (Date.now() < deadline) {
     if (shouldCancel()) break;
@@ -247,7 +274,9 @@ async function chat(page, providerId, prompt, opts = {}) {
       latestAnswer = st.answer;
       answer = st.answer;
 
-      if (!st.generating && st.answer === prevAnswer) {
+      if (st.answer !== prevAnswer) lastChangeAt = Date.now();
+      const stalled = Date.now() - lastChangeAt > stallFailsafeMs;
+      if (!st.generating && (!st.stopVisible || stalled) && st.answer === prevAnswer) {
         stableCount += 1;
         if (stableCount >= provider.completionStablePolls) {
           if (!finishGraceAt) finishGraceAt = Date.now();
@@ -258,7 +287,7 @@ async function chat(page, providerId, prompt, opts = {}) {
         finishGraceAt = 0;
       }
       prevAnswer = st.answer;
-    } else if (sawAnswer && !st.generating) {
+    } else if (sawAnswer && !st.generating && !st.stopVisible) {
       if (st.answer === prevAnswer) {
         stableCount += 1;
         if (stableCount >= provider.completionStablePolls) {
