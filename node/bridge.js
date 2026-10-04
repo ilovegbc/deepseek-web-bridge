@@ -111,7 +111,7 @@ const BRIDGE_SCRIPT = `
     try {
       const t = (document.body && (document.body.innerText || '')) || '';
       if (!t) return false;
-      return /账号[^\n]{0,10}(被封禁|被封|封禁|封号)|您的账号已被|账号异常|账号违规|banned|suspended|account[^\n]{0,16}(disabled|banned)/i.test(t);
+      return /账号.{0,10}(被封禁|被封|封禁|封号)|您的账号已被|账号异常|账号违规|banned|suspended|account.{0,16}(disabled|banned)/i.test(t);
     } catch (_) { return false; }
   }
 
@@ -360,11 +360,15 @@ async function configurePage(page, providerId) {
 
 async function readState(page, since) {
   const script = BRIDGE_SCRIPT.replace('%s', () => JSON.stringify(since || null));
+  try { new Function('return (' + script + ')'); }
+  catch (e) { console.log('[bridge] BRIDGE_SCRIPT syntax error: ' + e.message); throw e; }
   return await page.evaluate(script);
 }
 
 async function sendPrompt(page, text, images) {
   const script = SEND_SCRIPT.replace('%j', () => JSON.stringify(text)).replace('%k', () => JSON.stringify(images || []));
+  try { new Function('return (' + script + ')'); }
+  catch (e) { console.log('[bridge] SEND_SCRIPT syntax error: ' + e.message); throw e; }
   return await page.evaluate(script);
 }
 
