@@ -111,7 +111,7 @@ const BRIDGE_SCRIPT = `
     try {
       const t = (document.body && (document.body.innerText || '')) || '';
       if (!t) return false;
-      return /账号.{0,10}(被封禁|被封|封禁|封号)|您的账号已被|账号异常|账号违规|banned|suspended|account.{0,16}(disabled|banned)/i.test(t);
+      return /账号已被(禁言|封禁|封号|限制)|[您你]的账号已被|已被禁言|已被封禁|禁言至|由于违反用户使用规范|账号(状态)?异常|存在违规|banned|suspended/i.test(t);
     } catch (_) { return false; }
   }
 
