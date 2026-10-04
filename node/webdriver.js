@@ -159,6 +159,11 @@ async function chat(page, providerId, prompt, opts = {}) {
 
   const sendResult = await bridge.sendPrompt(page, prompt, images);
   const tSend = Date.now();
+  if (images.length) {
+    const msg = '[images] attach=' + String(sendResult) + ' count=' + images.length;
+    console.log(msg);
+    try { require('fs').appendFileSync(require('path').join(__dirname, 'images.log'), new Date().toISOString() + ' ' + msg + '\n'); } catch (_) {}
+  }
   if (!sendResult || !String(sendResult).includes('ok')) {
     return { thinking: '', answer: '' };
   }
@@ -292,7 +297,24 @@ async function chat(page, providerId, prompt, opts = {}) {
   }
 
   const tEnd = Date.now();
-  console.log(`[perf] ready=${tReady - t0}ms fresh=${tFresh - tReady}ms send=${tSend - tFresh}ms gen=${firstGeneratingAt ? firstGeneratingAt - tSend : -1}ms first=${firstContentAt ? firstContentAt - tSend : -1}ms tail=${tEnd - (firstContentAt || tSend)}ms total=${tEnd - t0}ms clean=${clean ? 1 : 0}${reallyClean ? '+skip' : ''}`);
+  console.log(`[perf] ready=${tReady - t0}ms fresh=${tFresh - tReady}ms send=${tSend - tFresh}ms gen=${firstGeneratingAt ? firstGeneratingAt - tSend : -1}ms first=${firstContentAt ? firstContentAt - tSend : -1}ms tail=${tEnd - (firstContentAt || tSend)}ms total=${tEnd - t0}ms clean=${clean ? 1 : 0}${reallyClean ? '+skip' : ''} rw=${answerStream.getRewriteConflicts()}`);
+
+  // 缺字漏字自查：长段英文字母里 c/d/e/f/n/r 占比异常低 => 文本曾被"删字母"腐蚀，落盘取证
+  try {
+    const runs = String(answer || '').match(/[A-Za-z .,;:'"()\[\]{}\-_/\\|@#$%^&*+=<>?!~`0-9]{300,}/g) || [];
+    for (const run of runs) {
+      const letters = run.replace(/[^A-Za-z]/g, '');
+      if (letters.length < 200) continue;
+      const bad = (letters.match(/[cdefnr]/g) || []).length;
+      const ratio = bad / letters.length;
+      if (ratio < 0.05) {
+        const fs = require('fs');
+        const path = require('path');
+        fs.appendFileSync(path.join(__dirname, 'corruption.log'),
+          new Date().toISOString() + ' SUSPECT ratio=' + ratio.toFixed(4) + ' letters=' + letters.length + ' snippet=' + JSON.stringify(letters.slice(0, 160)) + '\n');
+      }
+    }
+  } catch (_) {}
 
   return { thinking, answer };
 }

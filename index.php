@@ -98,10 +98,12 @@ if ($method==='GET' && ($path==='/login' || $path==='/login.php')) {
             $aid = (string)($st['accountId'] ?? $key);
             $label = htmlspecialchars((string)($st['label'] ?? $aid));
             $loggedIn = !empty($st['loggedIn']);
+            $banned = !empty($st['banned']);
             $busy = !empty($st['busy']);
             $running = !empty($st['running']);
-            $badge = $loggedIn ? '<span class="ok">已登录</span>'
-                  : ($running ? '<span class="warn">未登录</span>' : '<span class="muted">未启动</span>');
+            $badge = $banned ? '<span class="err">已封号</span>'
+                  : ($loggedIn ? '<span class="ok">已登录</span>'
+                  : ($running ? '<span class="warn">未登录</span>' : '<span class="muted">未启动</span>'));
             if ($busy) $badge .= ' <span class="warn">忙</span>';
             $delBtn = $busy ? '<button class="btn" disabled title="处理中，稍后再删">删除</button>'
                    : '<button class="btn" onclick="delAccount(\''.$aid.'\')">删除</button>';
@@ -159,6 +161,7 @@ if ($method==='GET' && ($path==='/login' || $path==='/login.php')) {
       td a{word-break:break-all}
       .ok{color:var(--ok);font-weight:600;white-space:nowrap}
       .warn{color:var(--warn);font-weight:600;white-space:nowrap}
+      .err{color:#ff6b6b;font-weight:600;white-space:nowrap}
       .muted{color:var(--mut);white-space:nowrap}
       .btn{cursor:pointer;padding:.4rem .8rem;border-radius:8px;border:1px solid var(--line);background:#1e2430;color:var(--fg);white-space:nowrap}
       .btn:hover{border-color:var(--acc)}
@@ -191,7 +194,8 @@ if ($method==='GET' && ($path==='/login' || $path==='/login.php')) {
       .'<div class="card full"><h2>账号池登录</h2>'
         .'<p class="hint">多账号全部后台在线（工作会话无窗口，不占桌面）：登录共用一个窗口，点任意账号「打开登录窗口」→ 在其中登录 → '
         .'自动保存并转入后台在线 → 继续点下一个账号，同一窗口直接换号登录，无需关窗。'
-        .'当前池: <strong>'.$sum['total'].'</strong> 账号 · 已登录 <strong>'.$sum['loggedIn'].'</strong> · 忙 <strong>'.$sum['busy'].'</strong>。</p>'
+        .'当前池: <strong>'.$sum['total'].'</strong> 账号 · 已登录 <strong>'.$sum['loggedIn'].'</strong> · 忙 <strong>'.$sum['busy'].'</strong>'
+        .($sum['banned'] > 0 ? ' · <span class="err">已封号 '.$sum['banned'].'</span>' : '').'。</p>'
         .'<p class="hint">Sidecar 状态: <code>'.SIDECAR_URL.'</code> — <span id="sc">'.($status['ok']?'在线':'离线 (先运行 scripts\\manage.ps1 -Action start)').'</span> '
         .'· 状态接口 <code>GET /login/status</code> · 账号接口 <code>GET /accounts</code></p>'
         .'<div class="tablewrap"><table><tr><th>账号</th><th>homeUrl</th><th>model</th><th>状态</th><th>操作</th></tr>'.$rows.'</table></div>'
@@ -578,6 +582,15 @@ if ($path==='/v1/chat/completions' || $path==='/chat/completions' || $path==='/v
     }
 
     $finalAnswer = $streamResult['answer'] !== '' ? $streamResult['answer'] : $answerBuf;
+
+    // 完整性自检：流式已发内容与最终内容不一致（缺字漏字/错位）时落盘取证
+    if ($emitted !== $finalAnswer) {
+        @mkdir(__DIR__.'/logs', 0777, true);
+        @file_put_contents(__DIR__.'/logs/stream-mismatch-'.$traceId.'.txt',
+            "=== emitted (".strlen($emitted).") ===\n".$emitted."\n\n=== final (".strlen($finalAnswer).") ===\n".$finalAnswer);
+        log_line("Gateway","stream_mismatch id=$traceId emitted=".strlen($emitted)." final=".strlen($finalAnswer));
+    }
+
     $toolOut = ToolCalling::parse($finalAnswer, $plan);
     if ($plan['enabled']) {
         if (!empty($toolOut['attemptedToolCall']) && empty($toolOut['calls'])) {

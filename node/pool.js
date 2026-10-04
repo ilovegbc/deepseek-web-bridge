@@ -124,6 +124,7 @@ class AccountPool {
       context: null,
       page: null,
       loggedIn: false,
+      banned: false,
       busy: false,
       lastUsedAt: 0,
       pollTimer: null
@@ -150,7 +151,7 @@ class AccountPool {
     const defs = this._candidates(provider).filter(d => d.enabled !== false);
     const ready = defs
       .map(d => ({ def: d, slot: this.slots.get(d.id) }))
-      .filter(x => x.slot && !x.slot.busy && x.slot.loggedIn && x.slot.page && !x.slot.page.isClosed());
+      .filter(x => x.slot && !x.slot.busy && !x.slot.banned && x.slot.loggedIn && x.slot.page && !x.slot.page.isClosed());
 
     if (ready.length === 0) return null;
 
@@ -166,7 +167,7 @@ class AccountPool {
     const defs = this._candidates(provider).filter(d => d.enabled !== false);
     return defs.find(d => {
       const s = this.slots.get(d.id);
-      return !s || !s.busy;
+      return (!s || !s.busy) && !(s && s.banned);
     }) || null;
   }
 
@@ -195,7 +196,15 @@ class AccountPool {
   loggedInCount(provider) {
     let n = 0;
     for (const slot of this.slots.values()) {
-      if (slot.loggedIn && (!provider || (slot.def.provider || 'deepseek') === provider)) n++;
+      if (slot.loggedIn && !slot.banned && (!provider || (slot.def.provider || 'deepseek') === provider)) n++;
+    }
+    return n;
+  }
+
+  bannedCount(provider) {
+    let n = 0;
+    for (const slot of this.slots.values()) {
+      if (slot.banned && (!provider || (slot.def.provider || 'deepseek') === provider)) n++;
     }
     return n;
   }
@@ -259,6 +268,7 @@ class AccountPool {
         enabled: def.enabled,
         running: !!(slot && slot.page && !slot.page.isClosed()),
         loggedIn: !!(slot && slot.loggedIn),
+        banned: !!(slot && slot.banned),
         busy: !!(slot && slot.busy),
         profile: def.profile
       });

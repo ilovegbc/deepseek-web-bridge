@@ -67,17 +67,18 @@ function pool_any_logged_in(): bool {
 }
 
 function pool_summary(): array {
-    $total = 0; $loggedIn = 0; $busy = 0;
+    $total = 0; $loggedIn = 0; $busy = 0; $banned = 0;
     $st = sidecar_login_status();
     if ($st['ok'] && is_array($st['data'])) {
         foreach ($st['data'] as $acc) {
             if (!is_array($acc)) continue;
             $total++;
-            if (!empty($acc['loggedIn'])) $loggedIn++;
+            if (!empty($acc['banned'])) $banned++;
+            elseif (!empty($acc['loggedIn'])) $loggedIn++;
             if (!empty($acc['busy'])) $busy++;
         }
     }
-    return ['total' => $total, 'loggedIn' => $loggedIn, 'busy' => $busy];
+    return ['total' => $total, 'loggedIn' => $loggedIn, 'busy' => $busy, 'banned' => $banned];
 }
 
 function sidecar_health(): array {

@@ -123,7 +123,14 @@ async function refreshLogin(slot) {
   try {
     await bridge.configurePage(slot.page, slot.def.provider || 'deepseek');
     const st = await bridge.readState(slot.page);
+    if (st && st.banned) {
+      if (!slot.banned) console.log(`[pool] account ${slot.def.id} banned (封号)`);
+      slot.banned = true;
+      slot.loggedIn = false;
+      return false;
+    }
     if (st && st.loggedIn) {
+      slot.banned = false;
       if (!slot.loggedIn) {
         slot.loggedIn = true;
         try { await slot.context.storageState({ path: profilePath(slot.def.id) }); } catch (_) {}
@@ -293,13 +300,13 @@ async function getStatus(accountId) {
     if (!slot || !slot.page || slot.page.isClosed()) {
       return {
         accountId, label: def.label, provider: def.provider,
-        running: false, loggedIn: false, busy: false, state: null
+        running: false, loggedIn: false, banned: false, busy: false, state: null
       };
     }
     await refreshLogin(slot);
     return {
       accountId, label: def.label, provider: def.provider,
-      running: true, loggedIn: slot.loggedIn, busy: slot.busy, state: null
+      running: true, loggedIn: slot.loggedIn, banned: !!slot.banned, busy: slot.busy, state: null
     };
   }
 
@@ -310,12 +317,12 @@ async function getStatus(accountId) {
       await refreshLogin(slot);
       out[def.id] = {
         accountId: def.id, label: def.label, provider: def.provider,
-        running: true, loggedIn: slot.loggedIn, busy: slot.busy, state: null
+        running: true, loggedIn: slot.loggedIn, banned: !!slot.banned, busy: slot.busy, state: null
       };
     } else {
       out[def.id] = {
         accountId: def.id, label: def.label, provider: def.provider,
-        running: false, loggedIn: false, busy: false, state: null
+        running: false, loggedIn: false, banned: false, busy: false, state: null
       };
     }
   }
@@ -509,6 +516,7 @@ const server = http.createServer(async (req, res) => {
         accounts: pool.listDefs().length,
         busy: pool.busyCount(),
         loggedIn: pool.loggedInCount(),
+        banned: pool.bannedCount(),
         headless: HEADLESS_WORKERS,
         loginWindow: loginWindowInfo()
       });
@@ -572,6 +580,20 @@ const server = http.createServer(async (req, res) => {
       for (const s of pool.slots.values()) {
         if (!s.page || s.page.isClosed()) continue;
         const data = await bridge.debugStop(s.page).catch(e => ({ error: String(e.message || e) }));
+        return sendJson(res, 200, { accountId: s.id || (s.def && s.def.id) || '', data });
+      }
+      return sendJson(res, 404, { error: { message: 'no page available' } });
+    }
+
+    if (route === '/debug/eval') {
+      let raw = '';
+      for await (const chunk of req) raw += chunk;
+      let js = '';
+      try { js = (JSON.parse(raw) || {}).js || ''; } catch (_) {}
+      if (!js) return sendJson(res, 400, { error: { message: 'js required' } });
+      for (const s of pool.slots.values()) {
+        if (!s.page || s.page.isClosed()) continue;
+        const data = await s.page.evaluate(js).catch(e => ({ error: String(e.message || e) }));
         return sendJson(res, 200, { accountId: s.id || (s.def && s.def.id) || '', data });
       }
       return sendJson(res, 404, { error: { message: 'no page available' } });

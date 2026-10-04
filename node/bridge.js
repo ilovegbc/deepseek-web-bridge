@@ -106,6 +106,14 @@ const BRIDGE_SCRIPT = `
   const s = cfg.selectors;
   const answer = answerText(lastNode(s.answer, s.thinking));
   const thinking = cachedText(lastNode(s.thinking, null), 'thinking');
+  // 封号检测：页面出现封禁/违规提示（聊天页正文很少出现这类组合词）
+  function bannedNotice() {
+    try {
+      const t = (document.body && (document.body.innerText || '')) || '';
+      if (!t) return false;
+      return /账号[^\n]{0,10}(被封禁|被封|封禁|封号)|您的账号已被|账号异常|账号违规|banned|suspended|account[^\n]{0,16}(disabled|banned)/i.test(t);
+    } catch (_) { return false; }
+  }
 
   // since 携带调用方已累积的长度；与页面基准长度一致时只回增量（answer/thinking=null），
   // 否则（首次/失步/回退）回全文并重置基准，调用方以全文重同步
@@ -137,7 +145,8 @@ const BRIDGE_SCRIPT = `
     thinking: thinkingOut,
     thinkingDelta,
     generating: any(s.generating),
-    loggedIn: loggedIn()
+    loggedIn: loggedIn(),
+    banned: bannedNotice()
   };
 })(%s)
 `;
@@ -205,14 +214,16 @@ const SEND_SCRIPT = `
 
   async function attachImages(list) {
     if (!list || !list.length) return 'none';
+    const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
     let input = null;
-    for (const el of document.querySelectorAll('input[type="file"]')) {
+    for (const el of inputs) {
       const acc = el.getAttribute('accept') || '';
       if (acc.includes('image')) { input = el; break; }
       if (!input) input = el;
     }
-    if (!input) return 'no_input';
+    if (!input) return 'no_input(n=' + inputs.length + ')';
     const dt = new DataTransfer();
+    let fetched = 0;
     for (const img of list) {
       try {
         const res = await fetch(img.url);
@@ -220,13 +231,15 @@ const SEND_SCRIPT = `
         let ext = (blob.type.split('/')[1] || 'png').split('+')[0];
         if (ext === 'jpeg') ext = 'jpg';
         dt.items.add(new File([blob], 'image.' + ext, { type: blob.type || 'image/png' }));
+        fetched += 1;
       } catch (_) {}
     }
-    if (!dt.items.length) return 'fetch_failed';
+    if (!dt.items.length) return 'fetch_failed(n=' + inputs.length + ')';
     input.files = dt.files;
     input.dispatchEvent(new Event('change', { bubbles: true }));
     const started = Date.now();
     const deadline = started + 20000;
+    let lastPreview = 0;
     for (;;) {
       const previews = Array.from(document.querySelectorAll('img')).filter(el => {
         const src = el.currentSrc || el.src || '';
@@ -234,10 +247,11 @@ const SEND_SCRIPT = `
         const r = el.getBoundingClientRect();
         return r.width > 16 && r.height > 16 && r.top > window.innerHeight * 0.3;
       });
-      if (previews.length > 0) { await new Promise(r => setTimeout(r, 400)); return 'ok'; }
+      lastPreview = previews.length;
+      if (previews.length > 0) { await new Promise(r => setTimeout(r, 400)); return 'ok(prev=' + previews.length + ')'; }
       const n = input.files ? input.files.length : 0;
-      if (n === 0 && Date.now() - started > 1500) return 'ok';
-      if (Date.now() >= deadline) return 'timeout';
+      if (n === 0 && Date.now() - started > 1500) return 'ok(cleared,fetched=' + fetched + ')';
+      if (Date.now() >= deadline) return 'timeout(fetched=' + fetched + ',n=' + n + ',prev=' + lastPreview + ')';
       await new Promise(r => setTimeout(r, 250));
     }
   }
