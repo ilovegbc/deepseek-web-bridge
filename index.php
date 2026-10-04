@@ -59,7 +59,7 @@ header("Access-Control-Allow-Methods: *");
 if ($path==='/health' || $path==='/_tunnel_probe' || $path==='/__tunnel_probe'
     || $path==='/' || $path==='/index.php'
     || $path==='/login' || $path==='/login.php' || $path==='/login/status'
-    || $path==='/login/open' || $path==='/login/close' || $path==='/accounts') {
+    || $path==='/login/open' || $path==='/login/close' || $path==='/accounts' || $path==='/savings') {
     // public routes
 } else {
     if (API_KEY !== '') {
@@ -79,6 +79,17 @@ if ($method==='GET' && ($path==='/health' || $path==='/api/health')) {
     exit;
 }
 
+if ($method==='GET' && ($path==='/savings' || $path==='/api/savings')) {
+    header("Content-Type: application/json");
+    echo json_encode([
+        'ok' => true,
+        'savings' => savings_totals(),
+        'rate' => USD_CNY_RATE,
+        'period' => is_peak_now() ? 'peak' : 'offpeak',
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
 if ($method==='GET' && ($path==='/login' || $path==='/login.php')) {
     header("Content-Type: text/html; charset=utf-8");
     $status = sidecar_login_status();
@@ -88,6 +99,7 @@ if ($method==='GET' && ($path==='/login' || $path==='/login.php')) {
     $home = $UPSTREAM_MAP[$pid]['url'] ?? '';
     $model = $UPSTREAM_MAP[$pid]['model'] ?? '';
     $sum = pool_summary();
+    $sav = savings_totals();
     $rows = '';
     if (empty($all)) {
         $badge = '<span class="muted">未启动</span>';
@@ -196,6 +208,8 @@ if ($method==='GET' && ($path==='/login' || $path==='/login.php')) {
         .'自动保存并转入后台在线 → 继续点下一个账号，同一窗口直接换号登录，无需关窗。'
         .'当前池: <strong>'.$sum['total'].'</strong> 账号 · 已登录 <strong>'.$sum['loggedIn'].'</strong> · 忙 <strong>'.$sum['busy'].'</strong>'
         .($sum['banned'] > 0 ? ' · <span class="err">已封号 '.$sum['banned'].'</span>' : '').'。</p>'
+        .'<p class="hint">已帮您节省 <strong>¥'.number_format((float)$sav['cny'], 4).'</strong> / <strong>$'.number_format((float)$sav['usd'], 4).'</strong>'
+        .'（累计 '.$sav['requests'].' 次请求，按 DeepSeek-V4.1-Flash 官方价折算；高峰/空闲按北京时间自动切换）</p>'
         .'<p class="hint">Sidecar 状态: <code>'.SIDECAR_URL.'</code> — <span id="sc">'.($status['ok']?'在线':'离线 (先运行 scripts\\manage.ps1 -Action start)').'</span> '
         .'· 状态接口 <code>GET /login/status</code> · 账号接口 <code>GET /accounts</code></p>'
         .'<div class="tablewrap"><table><tr><th>账号</th><th>homeUrl</th><th>model</th><th>状态</th><th>操作</th></tr>'.$rows.'</table></div>'
@@ -486,13 +500,14 @@ if ($path==='/v1/chat/completions' || $path==='/chat/completions' || $path==='/v
             $finish = 'tool_calls';
         }
         if ($thinkingText !== '' && $thinkingText !== null) $msg['reasoning_content'] = $thinkingText;
+        $usage = finalize_usage(chat_usage((string)$prompt, $answerText, (string)$thinkingText, cached_prefix_tokens($body)));
         $resp = [
             'id'=>'chatcmpl-'.time(),
             'object'=>'chat.completion',
             'created'=>time(),
             'model'=>$modelReq,
             'choices'=>[['index'=>0,'message'=>$msg,'finish_reason'=>$finish]],
-            'usage'=>chat_usage((string)$prompt, $answerText, (string)$thinkingText, cached_prefix_tokens($body)),
+            'usage'=>$usage,
             'system_fingerprint'=>'fp_deepseek_web',
         ];
         log_line("Gateway","chat_done id=$traceId stream=false answerChars=".strlen($answerText));
@@ -617,7 +632,8 @@ if ($path==='/v1/chat/completions' || $path==='/chat/completions' || $path==='/v
         }
         $finish = 'stop';
     }
-    $usage = chat_usage($plan['prompt'], $finalAnswer, $thinkingBuf, cached_prefix_tokens($body));
+    $finalThinking = $streamResult['thinking'] !== '' ? $streamResult['thinking'] : $thinkingBuf;
+    $usage = finalize_usage(chat_usage($plan['prompt'], $finalAnswer, $finalThinking, cached_prefix_tokens($body)));
     $emit(sse_done($id, $created, $finish, $modelReq, $usage));
     if (!empty($body['stream_options']['include_usage'])) {
         $emit(sse_usage($id, $created, $usage, $modelReq));

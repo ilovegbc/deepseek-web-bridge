@@ -201,6 +201,7 @@
     <div class="srow"><span class="dot" id="dotGw"></span><b>网关</b><span class="val" id="txtGw">检测中…</span></div>
     <div class="srow"><span class="dot" id="dotSc"></span><b>Sidecar</b><span class="val" id="txtSc">检测中…</span></div>
     <div class="srow"><span class="dot" id="dotAcc" style="visibility:hidden"></span><b>在线账号</b><span class="val" id="txtAcc">—</span></div>
+    <div class="srow"><span class="dot" style="visibility:hidden"></span><b>已帮您节省</b><span class="val" id="txtSav">—</span></div>
     <div class="extnote" id="extNote">检测到端口上已有服务运行。点「启动服务」会提示端口被占用，可先停止已有服务或改端口。</div>
     <div class="acts">
       <button id="btnStart" class="btn primary">启动服务</button>
@@ -328,6 +329,10 @@ function renderState(s) {
   $('txtSc').textContent = scOn ? (running ? '在线' : '外部占用') : '离线';
   $('txtAcc').textContent = (s.loggedIn != null)
     ? s.loggedIn + ' / ' + (s.accounts ?? '—') + (s.busy ? '（忙 ' + s.busy + '）' : '')
+    : '—';
+  const sv = s.savings;
+  $('txtSav').textContent = sv
+    ? '¥' + Number(sv.cny || 0).toFixed(4) + ' / $' + Number(sv.usd || 0).toFixed(4) + '（' + (sv.requests || 0) + ' 次）'
     : '—';
   $('dotAcc').style.visibility = scOn ? 'visible' : 'hidden';
   setDot($('dotAcc'), (s.loggedIn > 0) ? 'on' : '');

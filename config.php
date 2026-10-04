@@ -42,3 +42,10 @@ define('SIDECAR_TIMEOUT_SEC', max(CHAT_TIMEOUT_SEC + 10, 130));
 
 define('ENABLE_LOG', true);
 define('LOG_FILE', __DIR__ . '/gateway.log');
+
+// ---- 成本 / 节省统计 --------------------------------------------------------
+// 官方价（CNY / 1M tokens，DeepSeek-V4.1-Flash）：
+//   缓存命中 0.04(高峰)/0.02(空闲)；缓存未命中 2/1；输出 8/4
+// 高峰时段：北京时间 9:00-12:00、14:00-18:00（其余为空闲，价格减半）
+define('USD_CNY_RATE', (float)(getenv('USD_CNY_RATE') ?: 7.2)); // USD 金额按此汇率换算，可用环境变量覆盖
+define('SAVINGS_FILE', __DIR__ . '/savings.json');

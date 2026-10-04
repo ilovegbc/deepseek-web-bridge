@@ -225,7 +225,9 @@ function getJson(url, ms) {
 async function pollHealth() {
   const gw = await getJson(`http://127.0.0.1:${settings.gatewayPort}/health`, 2500);
   const sc = await getJson(`http://127.0.0.1:${settings.sidecarPort}/health`, 2500);
+  const sav = await getJson(`http://127.0.0.1:${settings.gatewayPort}/savings`, 2500);
   const before = JSON.stringify(state);
+  state.savings = (sav && sav.ok && sav.savings) ? sav.savings : null;
   state.gateway = !!(gw && gw.ok);
   state.sidecar = !!(sc && sc.ok);
   state.accounts = sc && typeof sc.accounts === 'number' ? sc.accounts : null;

@@ -102,9 +102,78 @@ function chat_usage(string $prompt, string $answer, string $thinking = '', int $
         'total_tokens'=>$pt + $ct,
         'prompt_tokens_details'=>['cached_tokens'=>$cached],
         'completion_tokens_details'=>['reasoning_tokens'=>$rt],
+        // 别名：不同客户端从不同字段读推理 token（OpenCode/AI SDK 各版本差异）
+        'output_tokens_details'=>['reasoning_tokens'=>$rt],
+        'reasoning_tokens'=>$rt,
         'prompt_cache_hit_tokens'=>$cached,
         'prompt_cache_miss_tokens'=>$pt - $cached,
     ];
+}
+
+// ---- 官方价格与成本（DeepSeek-V4.1-Flash，CNY / 1M tokens）------------------------
+function deepseek_pricing(): array {
+    return [
+        'hit'  => ['peak' => 0.04, 'offpeak' => 0.02],
+        'miss' => ['peak' => 2.00, 'offpeak' => 1.00],
+        'out'  => ['peak' => 8.00, 'offpeak' => 4.00],
+    ];
+}
+
+// 高峰：北京时间 9:00-12:00、14:00-18:00；其余为空闲
+function is_peak_now(): bool {
+    try {
+        $now = new DateTime('now', new DateTimeZone('Asia/Shanghai'));
+        $hm = (int)$now->format('Hi');
+        return ($hm >= 900 && $hm < 1200) || ($hm >= 1400 && $hm < 1800);
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function usage_cost(array $usage): array {
+    $p = deepseek_pricing();
+    $period = is_peak_now() ? 'peak' : 'offpeak';
+    $hit  = (int)($usage['prompt_cache_hit_tokens'] ?? 0);
+    $miss = (int)($usage['prompt_cache_miss_tokens'] ?? 0);
+    $out  = (int)($usage['completion_tokens'] ?? 0);
+    $cny = $hit / 1e6 * $p['hit'][$period]
+         + $miss / 1e6 * $p['miss'][$period]
+         + $out / 1e6 * $p['out'][$period];
+    $rate = defined('USD_CNY_RATE') && USD_CNY_RATE > 0 ? USD_CNY_RATE : 7.2;
+    return ['cny' => $cny, 'usd' => $cny / $rate, 'period' => $period];
+}
+
+function savings_totals(bool $reload = false): array {
+    static $cache = null;
+    if ($cache !== null && !$reload) return $cache;
+    $empty = ['cny' => 0.0, 'usd' => 0.0, 'requests' => 0, 'prompt_tokens' => 0, 'completion_tokens' => 0, 'reasoning_tokens' => 0, 'updated' => 0];
+    $raw = @file_get_contents(SAVINGS_FILE);
+    if ($raw === false || $raw === '') { $cache = $empty; return $cache; }
+    $data = json_decode($raw, true);
+    $cache = is_array($data) ? array_merge($empty, $data) : $empty;
+    return $cache;
+}
+
+function record_savings(array $usage, array $cost): array {
+    $data = savings_totals(true);
+    $data['cny'] = round((float)$data['cny'] + $cost['cny'], 6);
+    $data['usd'] = round((float)$data['usd'] + $cost['usd'], 6);
+    $data['requests'] = (int)$data['requests'] + 1;
+    $data['prompt_tokens'] = (int)$data['prompt_tokens'] + (int)($usage['prompt_tokens'] ?? 0);
+    $data['completion_tokens'] = (int)$data['completion_tokens'] + (int)($usage['completion_tokens'] ?? 0);
+    $data['reasoning_tokens'] = (int)$data['reasoning_tokens'] + (int)($usage['reasoning_tokens'] ?? 0);
+    $data['updated'] = time();
+    @file_put_contents(SAVINGS_FILE, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), LOCK_EX);
+    return $data;
+}
+
+// 给 usage 附加成本字段并累计"已帮您节省"（网页会话免费，按官方 API 价折算节省额）
+function finalize_usage(array $usage): array {
+    $cost = usage_cost($usage);
+    $usage['cost_cny'] = round($cost['cny'], 6);
+    $usage['cost_usd'] = round($cost['usd'], 6);
+    record_savings($usage, $cost);
+    return $usage;
 }
 
 // 前缀缓存估算：除最后一条消息外的历史（含系统提示）视为命中缓存

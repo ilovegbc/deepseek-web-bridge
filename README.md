@@ -74,6 +74,14 @@ https://chat.deepseek.com/  (真实网页会话，每账号独立登录态)
 - `completion_tokens_details.reasoning_tokens`（深度思考计入 completion）
 - `prompt_tokens_details.cached_tokens`，以及 DeepSeek 风格的 `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`（按“前缀缓存”估算：除最后一条外的历史视为命中）
 - 流式：finish 分片带 `usage`；请求带 `stream_options.include_usage` 时额外补一条标准 usage-only 分片
+- 推理 token 多别名输出（`completion_tokens_details.reasoning_tokens`、`output_tokens_details.reasoning_tokens`、顶层 `reasoning_tokens`），兼容不同客户端版本的显示
+
+### 成本与节省（对齐官方价）
+
+- 按 **DeepSeek-V4.1-Flash** 官方价（CNY / 1M tokens）折算：缓存命中 **0.04(高峰)/0.02(空闲)**、未命中 **2/1**、输出 **8/4**；高峰时段为北京时间 **9:00-12:00、14:00-18:00**（其余时间空闲，价格减半）
+- 每次请求的 `usage` 附带 `cost_cny` / `cost_usd`；USD 按 `USD_CNY_RATE`（默认 7.2，环境变量可覆盖）换算
+- 网关自动累计「**已帮您节省**」（网页会话免费，按官方 API 价折算）：`/login` 页面与桌面应用均显示；`GET /savings` 返回累计 JSON（cny / usd / requests / prompt_tokens / completion_tokens / reasoning_tokens）
+- 累计文件 `savings.json`（网关目录，已 gitignore）
 
 ### 完成判定（防截断）
 
@@ -242,6 +250,7 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 | GET | `/login/status` | 账号池状态 JSON（按 accountId 键控） |
 | GET/POST/DELETE | `/accounts` | 账号池增删查（POST `{"id","label"}`；DELETE `?id=`；写入 accounts.json 热加载） |
 | GET | `/v1/models` | 模型列表（任一账号已登录即 available；声明 `vision` / `input_modalities` 支持图片） |
+| GET | `/savings` | 累计「已帮您节省」金额与 token 统计（公开，无需鉴权） |
 | POST | `/v1/chat/completions` | OpenAI 兼容 chat（stream / non-stream / tools / 多模态图片；响应含 `usage`） |
 | GET | `/accounts`（sidecar :8090） | sidecar 直连：同上（仅 PHP 内部 / 本机调试用） |
 
